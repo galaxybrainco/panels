@@ -12,6 +12,8 @@ DEBUG = False
 ALLOWED_HOSTS = env.list("DJANGO_ALLOWED_HOSTS", default=[])
 CSRF_TRUSTED_ORIGINS = env.list("DJANGO_CSRF_TRUSTED_ORIGINS", default=[])
 
+AUTH_USER_MODEL = "accounts.User"
+
 INSTALLED_APPS = [
     "django.contrib.admin",
     "django.contrib.auth",
