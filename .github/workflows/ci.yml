@@ -29,6 +29,10 @@ jobs:
       - uses: astral-sh/setup-uv@v5
       - name: Install dependencies
         run: uv sync --locked
+      - name: Django checks
+        run: uv run python manage.py check
+      - name: Check for missing migrations
+        run: uv run python manage.py makemigrations --check --dry-run
       - name: Lint
         run: uv run ruff check .
       - name: Check formatting

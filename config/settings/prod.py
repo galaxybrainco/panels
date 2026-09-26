@@ -4,8 +4,18 @@ from .base import *  # noqa: F403
 
 DEBUG = False
 
-if not SECRET_KEY:  # noqa: F405
-    raise ImproperlyConfigured("DJANGO_SECRET_KEY must be set in production")
+SECRET_KEY_PLACEHOLDER = "dev-only-change-me"
+MIN_SECRET_KEY_LENGTH = 50
+
+if (
+    not SECRET_KEY  # noqa: F405
+    or SECRET_KEY == SECRET_KEY_PLACEHOLDER  # noqa: F405
+    or len(SECRET_KEY) < MIN_SECRET_KEY_LENGTH  # noqa: F405
+):
+    raise ImproperlyConfigured(
+        "DJANGO_SECRET_KEY must be set to a strong, non-placeholder value of at "
+        f"least {MIN_SECRET_KEY_LENGTH} characters in production"
+    )
 
 if not ALLOWED_HOSTS:  # noqa: F405
     raise ImproperlyConfigured("DJANGO_ALLOWED_HOSTS must be set in production")
