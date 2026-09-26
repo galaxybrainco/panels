@@ -1,5 +1,7 @@
+from pathlib import Path
+
 from django.conf import settings
-from django.http import Http404, JsonResponse
+from django.http import Http404, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404
 from django.urls import reverse
 
@@ -77,4 +79,12 @@ def nodeinfo(request):
                 "nodeDescription": settings.INSTANCE_DESCRIPTION,
             },
         }
+    )
+
+
+def federation_md(request):
+    path = Path(settings.BASE_DIR) / "FEDERATION.md"
+    return HttpResponse(
+        path.read_text(encoding="utf-8"),
+        content_type="text/markdown; charset=utf-8",
     )
