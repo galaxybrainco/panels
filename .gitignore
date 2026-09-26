@@ -219,3 +219,7 @@ __marimo__/
 
 # Git worktrees (superpowers)
 .worktrees/
+
+# Django collected static and uploaded media
+/staticfiles/
+/uploads/

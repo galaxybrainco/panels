@@ -20,6 +20,15 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "django_tasks_db",
+    "accounts",
+    "actors",
+    "comics",
+    "media",
+    "federation",
+    "social",
+    "memberships",
+    "moderation",
+    "feeds",
 ]
 
 MIDDLEWARE = [
@@ -75,7 +84,7 @@ USE_TZ = True
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 MEDIA_URL = "media/"
-MEDIA_ROOT = BASE_DIR / "media"
+MEDIA_ROOT = BASE_DIR / "uploads"
 
 STORAGES = {
     "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
