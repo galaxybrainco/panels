@@ -1,3 +1,4 @@
+from cryptography.fernet import Fernet
 from django.core.exceptions import ImproperlyConfigured
 
 from .base import *  # noqa: F403
@@ -22,6 +23,15 @@ if not ALLOWED_HOSTS:  # noqa: F405
 
 if not INSTANCE_URL.startswith("https://"):  # noqa: F405
     raise ImproperlyConfigured("INSTANCE_URL must use https in production")
+
+if not FIELD_ENCRYPTION_KEY:  # noqa: F405
+    raise ImproperlyConfigured("FIELD_ENCRYPTION_KEY must be set in production")
+try:
+    Fernet(FIELD_ENCRYPTION_KEY.encode())  # noqa: F405
+except (ValueError, TypeError) as exc:
+    raise ImproperlyConfigured(
+        "FIELD_ENCRYPTION_KEY is not a valid Fernet key"
+    ) from exc
 
 if env("AWS_STORAGE_BUCKET_NAME", default=""):  # noqa: F405
     STORAGES["default"] = {  # noqa: F405

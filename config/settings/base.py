@@ -22,6 +22,8 @@ INSTANCE_DESCRIPTION = env("INSTANCE_DESCRIPTION", default="")
 INSTANCE_OPEN_REGISTRATIONS = env.bool("INSTANCE_OPEN_REGISTRATIONS", default=False)
 INSTANCE_ACTOR_HANDLE = env("INSTANCE_ACTOR_HANDLE", default="instance")
 
+FIELD_ENCRYPTION_KEY = env("FIELD_ENCRYPTION_KEY", default="")
+
 INSTALLED_APPS = [
     "django.contrib.admin",
     "django.contrib.auth",
