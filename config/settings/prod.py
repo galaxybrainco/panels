@@ -20,6 +20,9 @@ if (
 if not ALLOWED_HOSTS:  # noqa: F405
     raise ImproperlyConfigured("DJANGO_ALLOWED_HOSTS must be set in production")
 
+if not INSTANCE_URL.startswith("https://"):  # noqa: F405
+    raise ImproperlyConfigured("INSTANCE_URL must use https in production")
+
 if env("AWS_STORAGE_BUCKET_NAME", default=""):  # noqa: F405
     STORAGES["default"] = {  # noqa: F405
         "BACKEND": "storages.backends.s3.S3Storage",

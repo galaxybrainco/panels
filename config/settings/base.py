@@ -1,4 +1,5 @@
 from pathlib import Path
+from urllib.parse import urlparse
 
 import environ
 
@@ -13,6 +14,13 @@ ALLOWED_HOSTS = env.list("DJANGO_ALLOWED_HOSTS", default=[])
 CSRF_TRUSTED_ORIGINS = env.list("DJANGO_CSRF_TRUSTED_ORIGINS", default=[])
 
 AUTH_USER_MODEL = "accounts.User"
+
+INSTANCE_URL = env("INSTANCE_URL", default="http://localhost:8000").rstrip("/")
+INSTANCE_DOMAIN = urlparse(INSTANCE_URL).netloc
+INSTANCE_NAME = env("INSTANCE_NAME", default="Panels")
+INSTANCE_DESCRIPTION = env("INSTANCE_DESCRIPTION", default="")
+INSTANCE_OPEN_REGISTRATIONS = env.bool("INSTANCE_OPEN_REGISTRATIONS", default=False)
+INSTANCE_ACTOR_HANDLE = env("INSTANCE_ACTOR_HANDLE", default="instance")
 
 INSTALLED_APPS = [
     "django.contrib.admin",
