@@ -1,5 +1,6 @@
 import pytest
 from django.core.management import call_command
+from django.core.management.base import CommandError
 
 from actors.models import Actor
 
@@ -15,3 +16,11 @@ def test_create_instance_actor_is_idempotent(capsys):
     assert actor.is_local
     assert actor.ap_id.endswith("/actors/instance")
     assert actor.public_key_pem.startswith("-----BEGIN PUBLIC KEY-----")
+
+
+@pytest.mark.django_db
+def test_create_instance_actor_fails_without_usable_key(settings):
+    settings.FIELD_ENCRYPTION_KEY = ""
+    with pytest.raises(CommandError):
+        call_command("create_instance_actor")
+    assert Actor.objects.filter(is_instance_actor=True).count() == 0

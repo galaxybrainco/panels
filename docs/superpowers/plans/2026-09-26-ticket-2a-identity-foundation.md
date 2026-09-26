@@ -608,7 +608,7 @@ def test_encrypt_decrypt_roundtrip():
 def test_decrypt_with_wrong_key_raises(settings):
     token = crypto.encrypt(b"secret")
     settings.FIELD_ENCRYPTION_KEY = (
-        "ZGV2ZGV2ZGV2ZGV2ZGV2ZGV2ZGV2ZGV2ZGV2ZGV2ZGV2ZGV2ZGV2ZGV2"
+        "khtNoDFXLyvfkh2vVB8GRQmFfz_Q1ibc6XPEj8bTy8Y="
     )
     with pytest.raises(crypto.KeyEncryptionError):
         crypto.decrypt(token)
@@ -844,7 +844,7 @@ Modify `config/settings/dev.py`: add:
 
 ```python
 FIELD_ENCRYPTION_KEY = FIELD_ENCRYPTION_KEY or (  # noqa: F405
-    "ZGV2ZGV2ZGV2ZGV2ZGV2ZGV2ZGV2ZGV2ZGV2ZGV2ZGV2ZGV2ZGV2ZGV2"
+    "khtNoDFXLyvfkh2vVB8GRQmFfz_Q1ibc6XPEj8bTy8Y="
 )
 ```
 
@@ -866,7 +866,7 @@ Add `from cryptography.fernet import Fernet` to the top of `config/settings/prod
 Modify `.env.example`: add after `INSTANCE_OPEN_REGISTRATIONS`:
 
 ```text
-FIELD_ENCRYPTION_KEY=ZGV2ZGV2ZGV2ZGV2ZGV2ZGV2ZGV2ZGV2ZGV2ZGV2ZGV2ZGV2ZGV2ZGV2
+FIELD_ENCRYPTION_KEY=khtNoDFXLyvfkh2vVB8GRQmFfz_Q1ibc6XPEj8bTy8Y=
 ```
 
 Modify `tests/test_prod_settings.py`: extend `_reload_prod` to set the key and add a test:
