@@ -1,0 +1,37 @@
+[project]
+name = "panels"
+version = "0.1.0"
+description = "Community-first, multi-tenant Django platform for webcomics on the fediverse."
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "Django==6.1.1",
+    "django-environ==0.14.0",
+    "django-storages[s3]==1.14.6",
+    "django-tasks-db==0.13.0",
+    "psycopg[binary]==3.3.6",
+]
+
+[dependency-groups]
+dev = [
+    "pytest==9.1.1",
+    "pytest-django==4.14.0",
+    "ruff==0.16.9",
+]
+
+[tool.ruff]
+target-version = "py314"
+line-length = 88
+extend-exclude = ["docs", "*.md"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "N", "B", "A", "C4", "T20", "DJ", "S", "UP"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106"]
+"config/settings/*.py" = ["S105", "S106"]
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "config.settings.test"
+python_files = ["test_*.py", "*_test.py"]
