@@ -40,6 +40,9 @@ ACCOUNT_LOGIN_ON_EMAIL_CONFIRMATION = True
 ACCOUNT_UNIQUE_EMAIL = True
 ACCOUNT_ADAPTER = "accounts.adapter.AccountAdapter"
 ACCOUNT_FORMS = {"signup": "accounts.forms.SignupForm"}
+
+MFA_SUPPORTED_TYPES = ["totp", "webauthn", "recovery_codes"]
+MFA_PASSKEY_LOGIN_ENABLED = True
 DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default=f"noreply@{INSTANCE_DOMAIN}")
 MAILERS = {
     "default": {
