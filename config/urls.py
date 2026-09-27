@@ -5,6 +5,7 @@ from config.health import healthz
 
 urlpatterns = [
     path("admin/", admin.site.urls),
+    path("accounts/", include("allauth.urls")),
     path("healthz", healthz, name="healthz"),
     path("", include("actors.urls")),
 ]
