@@ -685,3 +685,6 @@ git commit -m "feat: enforce secure cookies and HSTS in production"
 **Type consistency:** `create_local_actor` (Ticket 2a) is the single actor-construction path; `validate_handle` is the single handle-validation path used by both the form and (transitively) the reserved-set tests; `_reload_prod` in `tests/test_prod_settings.py` is extended consistently across tickets.
 
 **Known deviations recorded as ledger rulings during execution:** (1) `django.contrib.sites` is not required by allauth 65, so it is not added; (2) a full WebAuthn ceremony is not exercised headlessly — Task 3 tests configuration and page rendering, not the browser credential flow; (3) the user's `Actor` is created at signup (handle reserved) rather than after email confirmation, per the chosen ruling.
+## Post-Review Fixes
+
+The whole-branch review found a **Critical**: signup was not atomic, so a failed actor creation could leave a `User` with no `Actor`. Fixed by wrapping `SignupForm.save` in `transaction.atomic()` and adding `accounts/views.SignupView` (wired before the allauth include in `config/urls.py`) to convert a handle-uniqueness race into a form error instead of a 500. The previously-unpinned verification-email focus now has a test, and `config/settings/test.py` uses the locmem mailer and disables allauth rate limits so signup tests are deterministic.

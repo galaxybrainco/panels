@@ -1,6 +1,7 @@
 from allauth.account.forms import SignupForm as BaseSignupForm
 from django import forms
 from django.core.exceptions import ValidationError
+from django.db import transaction
 
 from actors.handles import validate_handle
 from actors.models import Actor
@@ -24,6 +25,7 @@ class SignupForm(BaseSignupForm):
         return handle
 
     def save(self, request):
-        user = super().save(request)
-        create_local_actor(self.cleaned_data["handle"], user=user)
+        with transaction.atomic():
+            user = super().save(request)
+            create_local_actor(self.cleaned_data["handle"], user=user)
         return user
