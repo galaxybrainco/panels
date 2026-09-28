@@ -33,6 +33,25 @@ except (ValueError, TypeError) as exc:
         "FIELD_ENCRYPTION_KEY is not a valid Fernet key"
     ) from exc
 
+SECURE_SSL_REDIRECT = True
+SESSION_COOKIE_SECURE = True
+CSRF_COOKIE_SECURE = True
+SECURE_HSTS_SECONDS = 31536000
+SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+SECURE_HSTS_PRELOAD = True
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
+DEV_EMAIL_BACKENDS = {
+    "django.core.mail.backends.console.EmailBackend",
+    "django.core.mail.backends.locmem.EmailBackend",
+    "django.core.mail.backends.dummy.EmailBackend",
+    "django.core.mail.backends.filebased.EmailBackend",
+}
+if MAILERS["default"]["BACKEND"] in DEV_EMAIL_BACKENDS:  # noqa: F405
+    raise ImproperlyConfigured(
+        "DJANGO_EMAIL_BACKEND must be a production email backend"
+    )
+
 if env("AWS_STORAGE_BUCKET_NAME", default=""):  # noqa: F405
     STORAGES["default"] = {  # noqa: F405
         "BACKEND": "storages.backends.s3.S3Storage",
