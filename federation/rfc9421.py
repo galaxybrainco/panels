@@ -6,6 +6,7 @@ from http_message_signatures import (
 )
 
 DEFAULT_COVERED_COMPONENTS = ("@method", "@target-uri", "content-digest")
+DEFAULT_REQUIRED_COMPONENTS = ("@method", "@target-uri")
 
 
 class DictKeyResolver(HTTPSignatureKeyResolver):
@@ -47,13 +48,24 @@ def sign_rfc9421(message, private_key, key_id, covered_component_ids=None):
     return message
 
 
-def verify_rfc9421(message, resolve_public_key) -> bool:
+def verify_rfc9421(message, resolve_public_key, required_components=None) -> bool:
     resolver = CallbackKeyResolver(resolve_public_key)
     verifier = HTTPMessageVerifier(
         signature_algorithm=algorithms.RSA_V1_5_SHA256, key_resolver=resolver
     )
     try:
-        verifier.verify(message)
+        results = verifier.verify(message)
     except Exception:
         return False
-    return True
+    required = {
+        component.strip('"')
+        for component in (required_components or DEFAULT_REQUIRED_COMPONENTS)
+    }
+    if message.headers.get("Content-Digest"):
+        required.add("content-digest")
+    return any(
+        required.issubset(
+            {component.strip('"') for component in result.covered_components}
+        )
+        for result in results
+    )

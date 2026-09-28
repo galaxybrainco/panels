@@ -47,3 +47,19 @@ def test_rfc9421_rejects_tampered_target():
     assert (
         verify_rfc9421(signed, lambda key_id: rsa_public_key_from_actor(actor)) is False
     )
+
+
+@pytest.mark.django_db
+def test_rfc9421_rejects_signature_missing_required_components():
+    actor = create_local_actor("alice")
+    keys = load_actor_keys(actor)
+    message = _prepared("https://panels.test/actors/alice/inbox")
+    signed = sign_rfc9421(
+        message,
+        keys.rsa_private_key,
+        f"{actor.ap_id}#main-key",
+        covered_component_ids=("@method",),
+    )
+    assert (
+        verify_rfc9421(signed, lambda key_id: rsa_public_key_from_actor(actor)) is False
+    )

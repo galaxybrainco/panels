@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 import pytest
 
 from actors.services import create_local_actor
@@ -8,6 +10,8 @@ from federation.proofs import (
     add_integrity_proof,
     verify_integrity_proof,
 )
+
+NOW = datetime(2026, 9, 28, 12, 0, 0, tzinfo=UTC)
 
 
 def _document():
@@ -65,3 +69,20 @@ def test_add_integrity_proof_is_deterministic_with_fixed_created():
     first = add_integrity_proof(_document(), actor, keys, created=created)
     second = add_integrity_proof(_document(), actor, keys, created=created)
     assert first == second
+
+
+@pytest.mark.django_db
+def test_verify_rejects_expired_proof():
+    actor = create_local_actor("alice")
+    keys = load_actor_keys(actor)
+    signed = add_integrity_proof(
+        _document(),
+        actor,
+        keys,
+        created="2020-01-01T00:00:00Z",
+        expires="2020-01-02T00:00:00Z",
+    )
+    assert (
+        verify_integrity_proof(signed, ed25519_public_key_from_actor(actor), now=NOW)
+        is False
+    )

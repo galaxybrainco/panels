@@ -19,6 +19,12 @@ def now_isoformat() -> str:
     return datetime.now(tz=UTC).replace(microsecond=0, tzinfo=None).isoformat() + "Z"
 
 
+def _parse_isoformat(value: str) -> datetime:
+    if value.endswith("Z"):
+        value = value[:-1] + "+00:00"
+    return datetime.fromisoformat(value)
+
+
 def ensure_data_integrity_context(document: dict) -> dict:
     context = document.get("@context")
     if context is None:
@@ -30,7 +36,9 @@ def ensure_data_integrity_context(document: dict) -> dict:
     return {**document, "@context": [*context, DATA_INTEGRITY_CONTEXT]}
 
 
-def add_integrity_proof(document, actor: Actor, keys: ActorKeyMaterial, created=None):
+def add_integrity_proof(
+    document, actor: Actor, keys: ActorKeyMaterial, created=None, expires=None
+):
     secured = ensure_data_integrity_context(document)
     proof = {
         "type": "DataIntegrityProof",
@@ -39,12 +47,14 @@ def add_integrity_proof(document, actor: Actor, keys: ActorKeyMaterial, created=
         "verificationMethod": f"{actor.ap_id}#ed25519-key",
         "proofPurpose": "assertionMethod",
     }
+    if expires is not None:
+        proof["expires"] = expires
     digest = _jcs_sha256(proof) + _jcs_sha256(secured)
     proof["proofValue"] = multibase_base58btc(keys.ed25519_private_key.sign(digest))
     return {**secured, "proof": proof}
 
 
-def verify_integrity_proof(document, public_key) -> bool:
+def verify_integrity_proof(document, public_key, *, now=None) -> bool:
     proof = document.get("proof")
     if not isinstance(proof, dict):
         return False
@@ -55,6 +65,11 @@ def verify_integrity_proof(document, public_key) -> bool:
     proof_value = proof.get("proofValue")
     if not proof_value or not proof_value.startswith("z"):
         return False
+    expires = proof.get("expires")
+    if expires is not None:
+        now = now or datetime.now(tz=UTC)
+        if _parse_isoformat(expires) < now:
+            return False
     pure_proof = {k: v for k, v in proof.items() if k != "proofValue"}
     pure_document = {k: v for k, v in document.items() if k != "proof"}
     digest = _jcs_sha256(pure_proof) + _jcs_sha256(pure_document)

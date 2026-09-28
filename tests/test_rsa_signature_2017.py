@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 import pytest
 
 from actors.services import create_local_actor
@@ -7,6 +9,8 @@ from federation.rsa_signature_2017 import (
     add_rsa_signature_2017,
     verify_rsa_signature_2017,
 )
+
+NOW = datetime(2026, 9, 28, 12, 0, 0, tzinfo=UTC)
 
 
 def _document():
@@ -53,3 +57,32 @@ def test_verify_rejects_tampered_content():
     )
     signed["content"] = "Tampered"
     assert verify_rsa_signature_2017(signed, rsa_public_key_from_actor(actor)) is False
+
+
+@pytest.mark.django_db
+def test_roundtrip_with_security_context_term():
+    actor = create_local_actor("alice")
+    keys = load_actor_keys(actor)
+    document = _document()
+    document["creator"] = "https://panels.test/actors/alice"
+    signed = add_rsa_signature_2017(
+        document, keys.rsa_private_key, f"{actor.ap_id}#main-key"
+    )
+    assert verify_rsa_signature_2017(signed, rsa_public_key_from_actor(actor)) is True
+
+
+@pytest.mark.django_db
+def test_verify_rejects_expired_signature():
+    actor = create_local_actor("alice")
+    keys = load_actor_keys(actor)
+    signed = add_rsa_signature_2017(
+        _document(),
+        keys.rsa_private_key,
+        f"{actor.ap_id}#main-key",
+        created="2020-01-01T00:00:00Z",
+        expires="2020-01-02T00:00:00Z",
+    )
+    assert (
+        verify_rsa_signature_2017(signed, rsa_public_key_from_actor(actor), now=NOW)
+        is False
+    )
