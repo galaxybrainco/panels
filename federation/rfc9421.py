@@ -1,9 +1,11 @@
+from cryptography.exceptions import UnsupportedAlgorithm
 from http_message_signatures import (
     HTTPMessageSigner,
     HTTPMessageVerifier,
     HTTPSignatureKeyResolver,
     algorithms,
 )
+from http_message_signatures.exceptions import HTTPMessageSignaturesException
 
 DEFAULT_COVERED_COMPONENTS = ("@method", "@target-uri", "content-digest")
 DEFAULT_REQUIRED_COMPONENTS = ("@method", "@target-uri")
@@ -55,7 +57,7 @@ def verify_rfc9421(message, resolve_public_key, required_components=None) -> boo
     )
     try:
         results = verifier.verify(message)
-    except Exception:
+    except HTTPMessageSignaturesException, KeyError, UnsupportedAlgorithm:
         return False
     required = {
         component.strip('"')

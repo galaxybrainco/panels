@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from urllib.parse import urlparse
 
+from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding
 
@@ -118,12 +119,15 @@ def verify_cavage(
         signing_string = build_cavage_signing_string(
             message.method, message.url, message.headers, signed_headers
         )
+    except ValueError:
+        return False
+    try:
         public_key.verify(
             signature,
             signing_string.encode("utf-8"),
             padding.PKCS1v15(),
             hashes.SHA256(),
         )
-    except Exception:
+    except InvalidSignature:
         return False
     return True

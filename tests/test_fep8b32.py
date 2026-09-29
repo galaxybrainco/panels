@@ -86,3 +86,12 @@ def test_verify_rejects_expired_proof():
         verify_integrity_proof(signed, ed25519_public_key_from_actor(actor), now=NOW)
         is False
     )
+
+
+@pytest.mark.django_db
+def test_verify_returns_false_for_unparseable_proofvalue():
+    actor = create_local_actor("alice")
+    keys = load_actor_keys(actor)
+    signed = add_integrity_proof(_document(), actor, keys)
+    signed["proof"]["proofValue"] = "z!!!not-base58!!!"
+    assert verify_integrity_proof(signed, ed25519_public_key_from_actor(actor)) is False

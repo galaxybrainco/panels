@@ -1,7 +1,9 @@
 import base64
+import binascii
 import hashlib
 from datetime import UTC, datetime, timedelta
 
+from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding
 
@@ -91,12 +93,16 @@ def verify_rsa_signature_2017(document, public_key, *, now=None) -> bool:
         _options_hash(signature) + _sha256_hex(document_without_signature)
     ).encode("utf-8")
     try:
+        signature_bytes = base64.b64decode(signature["signatureValue"])
+    except binascii.Error, ValueError:
+        return False
+    try:
         public_key.verify(
-            base64.b64decode(signature["signatureValue"]),
+            signature_bytes,
             to_verify,
             padding.PKCS1v15(),
             hashes.SHA256(),
         )
-    except Exception:
+    except InvalidSignature:
         return False
     return True

@@ -132,6 +132,21 @@ def test_cavage_verify_returns_false_for_malformed_header():
 
 
 @pytest.mark.django_db
+def test_cavage_verify_returns_false_for_invalid_signature_bytes():
+    actor = create_local_actor("alice")
+    message = _prepared("https://panels.test/actors/alice/inbox", b"{}")
+    message.headers["Signature"] = (
+        f'keyId="{actor.ap_id}#main-key",algorithm="rsa-sha256",'
+        f'headers="(request-target) host date content-type digest",'
+        f'signature="{base64.b64encode(b"\\x00" * 256).decode()}"'
+    )
+    assert (
+        verify_cavage(message, lambda key_id: rsa_public_key_from_actor(actor), now=NOW)
+        is False
+    )
+
+
+@pytest.mark.django_db
 def test_cavage_requires_signed_headers_present():
     actor = create_local_actor("alice")
     keys = load_actor_keys(actor)

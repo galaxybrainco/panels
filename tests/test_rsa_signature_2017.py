@@ -86,3 +86,14 @@ def test_verify_rejects_expired_signature():
         verify_rsa_signature_2017(signed, rsa_public_key_from_actor(actor), now=NOW)
         is False
     )
+
+
+@pytest.mark.django_db
+def test_verify_returns_false_for_malformed_signature_value():
+    actor = create_local_actor("alice")
+    keys = load_actor_keys(actor)
+    signed = add_rsa_signature_2017(
+        _document(), keys.rsa_private_key, f"{actor.ap_id}#main-key"
+    )
+    signed["signature"]["signatureValue"] = "!!!not-base64!!!"
+    assert verify_rsa_signature_2017(signed, rsa_public_key_from_actor(actor)) is False

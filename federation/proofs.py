@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 
 import base58
 import jcs
+from cryptography.exceptions import InvalidSignature
 
 from actors.models import Actor
 from federation.keys import ActorKeyMaterial, multibase_base58btc
@@ -75,7 +76,10 @@ def verify_integrity_proof(document, public_key, *, now=None) -> bool:
     digest = _jcs_sha256(pure_proof) + _jcs_sha256(pure_document)
     try:
         signature = base58.b58decode(proof_value[1:])
+    except ValueError:
+        return False
+    try:
         public_key.verify(signature, digest)
-    except Exception:
+    except InvalidSignature:
         return False
     return True
