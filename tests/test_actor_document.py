@@ -36,3 +36,17 @@ def test_actor_document_does_not_leak_private_keys(client):
 def test_unknown_actor_returns_404(client):
     response = client.get(reverse("actor-detail", kwargs={"handle": "ghost"}))
     assert response.status_code == 404
+
+
+@pytest.mark.django_db
+def test_actor_document_advertises_ed25519_assertion_method(client):
+    from actors.services import create_local_actor
+
+    actor = create_local_actor("alice")
+    data = client.get(reverse("actor-detail", kwargs={"handle": "alice"})).json()
+    method = data["assertionMethod"]
+    assert method["id"] == f"{actor.ap_id}#ed25519-key"
+    assert method["type"] == "Multikey"
+    assert method["controller"] == actor.ap_id
+    assert method["publicKeyMultibase"].startswith("z")
+    assert data["publicKey"]["publicKeyPem"] == actor.public_key_pem
