@@ -21,11 +21,14 @@ def backoff_seconds(attempt: int) -> int:
 def _throttle_allows(inbox_url: str) -> bool:
     domain = urlparse(inbox_url).netloc
     key = f"federation:throttle:{domain}"
-    count = cache.get(key, 0)
-    if count >= THROTTLE_LIMIT:
-        return False
-    cache.set(key, count + 1, timeout=THROTTLE_WINDOW)
-    return True
+    if cache.add(key, 1, timeout=THROTTLE_WINDOW):
+        return True
+    try:
+        count = cache.incr(key)
+    except ValueError:
+        cache.set(key, 1, timeout=THROTTLE_WINDOW)
+        return True
+    return count <= THROTTLE_LIMIT
 
 
 def _dead_letter(delivery, error):
@@ -55,6 +58,16 @@ def _reschedule(delivery, error):
     deliver_activity.using(run_after=delivery.next_attempt_at).enqueue(str(delivery.id))
 
 
+def _reschedule_throttled(delivery):
+    delivery.status = DeliveryStatus.FAILED
+    delivery.last_error = "rate limited"
+    delivery.next_attempt_at = timezone.now() + timedelta(seconds=THROTTLE_WINDOW)
+    delivery.save(
+        update_fields=["status", "next_attempt_at", "last_error", "updated_at"]
+    )
+    deliver_activity.using(run_after=delivery.next_attempt_at).enqueue(str(delivery.id))
+
+
 def _deliver(delivery_id):
     try:
         delivery = Delivery.objects.get(id=delivery_id)
@@ -66,7 +79,7 @@ def _deliver(delivery_id):
         _dead_letter(delivery, "blocked by instance policy")
         return
     if not _throttle_allows(delivery.inbox_url):
-        _reschedule(delivery, "rate limited")
+        _reschedule_throttled(delivery)
         return
     try:
         response = client.post_activity(

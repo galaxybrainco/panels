@@ -41,6 +41,13 @@ SECURE_HSTS_INCLUDE_SUBDOMAINS = True
 SECURE_HSTS_PRELOAD = True
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.db.DatabaseCache",
+        "LOCATION": "panels_cache",
+    },
+}
+
 DEV_EMAIL_BACKENDS = {
     "django.core.mail.backends.console.EmailBackend",
     "django.core.mail.backends.locmem.EmailBackend",

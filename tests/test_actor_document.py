@@ -1,3 +1,6 @@
+import base64
+
+import base58
 import pytest
 from django.urls import reverse
 
@@ -48,5 +51,7 @@ def test_actor_document_advertises_ed25519_assertion_method(client):
     assert method["id"] == f"{actor.ap_id}#ed25519-key"
     assert method["type"] == "Multikey"
     assert method["controller"] == actor.ap_id
-    assert method["publicKeyMultibase"].startswith("z")
+    decoded = base58.b58decode(method["publicKeyMultibase"][1:])
+    assert decoded[:2] == b"\xed\x01"
+    assert decoded[2:] == base64.b64decode(actor.ed25519_public_key)
     assert data["publicKey"]["publicKeyPem"] == actor.public_key_pem

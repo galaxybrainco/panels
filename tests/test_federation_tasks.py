@@ -1,4 +1,5 @@
 import pytest
+import requests
 import responses
 from django.core.cache import cache
 
@@ -87,9 +88,50 @@ def test_delivery_4xx_is_dead_lettered():
 def test_delivery_throttled_reschedules_without_request():
     actor = create_local_actor("alice")
     delivery = _delivery(actor)
+    cache.clear()
     cache.set("federation:throttle:other.test", 10_000, timeout=60)
     deliver_activity.func(delivery.id)
     delivery.refresh_from_db()
     assert delivery.status == DeliveryStatus.FAILED
+    assert delivery.attempts == 0
+    assert delivery.next_attempt_at is not None
+    assert len(responses.calls) == 0
+    cache.clear()
+
+
+@pytest.mark.django_db
+@responses.activate
+def test_delivery_network_error_schedules_retry():
+    actor = create_local_actor("alice")
+    delivery = _delivery(actor)
+    responses.add(
+        responses.POST, INBOX, body=requests.exceptions.ConnectionError("boom")
+    )
+    deliver_activity.func(delivery.id)
+    delivery.refresh_from_db()
+    assert delivery.status == DeliveryStatus.FAILED
     assert delivery.attempts == 1
+
+
+@pytest.mark.django_db
+@responses.activate
+def test_delivery_429_schedules_retry():
+    actor = create_local_actor("alice")
+    delivery = _delivery(actor)
+    responses.add(responses.POST, INBOX, status=429)
+    deliver_activity.func(delivery.id)
+    delivery.refresh_from_db()
+    assert delivery.status == DeliveryStatus.FAILED
+    assert delivery.attempts == 1
+
+
+@pytest.mark.django_db
+@responses.activate
+def test_delivery_is_idempotent_for_finished_rows():
+    actor = create_local_actor("alice")
+    for status in (DeliveryStatus.DELIVERED, DeliveryStatus.DEAD):
+        delivery = _delivery(actor, status=status)
+        deliver_activity.func(delivery.id)
+        delivery.refresh_from_db()
+        assert delivery.status == status
     assert len(responses.calls) == 0

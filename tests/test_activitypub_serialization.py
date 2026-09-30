@@ -55,6 +55,13 @@ def test_is_public_reads_to_and_cc():
     assert is_public({}) is False
 
 
+def test_is_public_accepts_scalar_and_object_addressing():
+    assert is_public({"to": PUBLIC}) is True
+    assert is_public({"object": {"to": [PUBLIC]}}) is True
+    assert is_public({"object": {"cc": [PUBLIC]}}) is True
+    assert is_public({"object": {"to": ["x"], "cc": ["y"]}}) is False
+
+
 def test_collection_builders():
     collection = ordered_collection(
         "https://panels.test/actors/alice/outbox", total_items=2, first="p1"

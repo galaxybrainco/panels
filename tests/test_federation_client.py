@@ -1,4 +1,5 @@
 import pytest
+import requests
 import responses
 
 from actors.services import create_local_actor
@@ -49,7 +50,7 @@ def test_post_activity_uses_remembered_preference_first():
 @pytest.mark.django_db
 @responses.activate
 def test_fetch_json_signs_with_instance_actor():
-    create_local_actor("instance", is_instance_actor=True)
+    instance = create_local_actor("instance", is_instance_actor=True)
     responses.add(
         responses.GET,
         "https://other.test/actors/bob",
@@ -58,7 +59,52 @@ def test_fetch_json_signs_with_instance_actor():
     )
     document = fetch_json("https://other.test/actors/bob")
     assert document["type"] == "Person"
-    assert "Signature" in responses.calls[0].request.headers
+    signature = responses.calls[0].request.headers["Signature"]
+    assert f"{instance.ap_id}#main-key" in signature
+
+
+@pytest.mark.django_db
+@responses.activate
+def test_fetch_json_rejects_non_https():
+    create_local_actor("instance", is_instance_actor=True)
+    assert fetch_json("http://other.test/actors/bob") is None
+    assert len(responses.calls) == 0
+
+
+@pytest.mark.django_db
+@responses.activate
+def test_fetch_json_rejects_private_and_link_local_addresses():
+    create_local_actor("instance", is_instance_actor=True)
+    assert fetch_json("https://169.254.169.254/latest/meta-data/") is None
+    assert fetch_json("https://127.0.0.1/actors/bob") is None
+    assert fetch_json("https://10.0.0.1/actors/bob") is None
+    assert len(responses.calls) == 0
+
+
+@pytest.mark.django_db
+@responses.activate
+def test_fetch_json_does_not_follow_redirects():
+    create_local_actor("instance", is_instance_actor=True)
+    responses.add(
+        responses.GET,
+        "https://other.test/actors/bob",
+        status=302,
+        headers={"Location": "https://evil.test/actors/bob"},
+    )
+    assert fetch_json("https://other.test/actors/bob") is None
+    assert len(responses.calls) == 1
+
+
+@pytest.mark.django_db
+@responses.activate
+def test_fetch_json_returns_none_on_network_error():
+    create_local_actor("instance", is_instance_actor=True)
+    responses.add(
+        responses.GET,
+        "https://other.test/actors/bob",
+        body=requests.exceptions.ConnectionError("boom"),
+    )
+    assert fetch_json("https://other.test/actors/bob") is None
 
 
 @pytest.mark.django_db

@@ -47,8 +47,19 @@ def addressing_for(audience, followers_url):
     return [], []
 
 
+def _recipients(value):
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    return list(value)
+
+
 def is_public(activity) -> bool:
-    recipients = list(activity.get("to") or []) + list(activity.get("cc") or [])
+    recipients = _recipients(activity.get("to")) + _recipients(activity.get("cc"))
+    obj = activity.get("object")
+    if isinstance(obj, dict):
+        recipients += _recipients(obj.get("to")) + _recipients(obj.get("cc"))
     return PUBLIC in recipients
 
 
