@@ -6,12 +6,17 @@ readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
     "Django==6.1.1",
+    "base58==2.1.1",
     "cryptography==50.0.1",
     "django-allauth[mfa]==65.19.4",
     "django-environ==0.14.0",
     "django-storages[s3]==1.14.6",
     "django-tasks-db==0.13.0",
+    "http-message-signatures==2.0.1",
+    "jcs==0.2.1",
     "psycopg[binary]==3.3.6",
+    "pyld==3.3.0",
+    "requests==2.34.2",
 ]
 
 [dependency-groups]
