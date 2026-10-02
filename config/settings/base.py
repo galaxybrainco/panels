@@ -65,6 +65,7 @@ INSTALLED_APPS = [
     "allauth.account",
     "allauth.mfa",
     "django_tasks_db",
+    "core",
     "accounts",
     "actors",
     "comics",

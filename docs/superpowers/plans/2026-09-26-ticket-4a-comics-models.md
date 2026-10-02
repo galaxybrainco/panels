@@ -21,6 +21,17 @@
 - `alt_text` is stored (blank allowed for drafts) but the "required before publish" gate is deferred to Ticket 5/6 (no Media yet).
 - `update_schedule` is structured JSON `{"days": [...], "time": "HH:MM"}`; scheduling execution is 4b.
 
+## Post-approval change — UUID entity IDs
+
+After plan approval, entity models were standardized onto a shared abstract base in a new `core` app:
+
+- `core/models.py` defines the abstract `UUIDModel`: `id = UUIDField(primary_key=True, default=uuid.uuid4, editable=False)`, `created_at`, `updated_at`.
+- `Comic`, `Tag`, `Series`, `Chapter`, `Page` inherit `UUIDModel` (dropping duplicate `id`/timestamp declarations).
+- `ComicRole` stays a plain `Model` (BigAuto pk + its own `created_at`): it is an internal join table, never externally referenced, so it keeps the smaller integer key.
+- `core` is added to `INSTALLED_APPS`.
+- Because PR #7 was unmerged, `comics/migrations` was regenerated from scratch as a single `0001_initial.py` (dev DB reset).
+- Pinned by `tests/test_comics_ids.py`.
+
 ## Review Focus
 
 Spec-implied failure modes no task's happy path exercises; each is pinned by a test in its owning task:
@@ -34,10 +45,11 @@ Spec-implied failure modes no task's happy path exercises; each is pinned by a t
 
 ## File Structure
 
+- `core/models.py` — abstract `UUIDModel` (UUID pk + timestamps) inherited by comics entities.
 - `comics/models.py` — `Tag`, `ContentRating`, `FederationMode`, `Comic`, `ComicRole`, `Series`, `Chapter`, `PageStatus`, `Page`.
 - `comics/services.py` — `create_comic`, `create_series`, `create_page`.
 - `comics/permissions.py` — `role_for`, `is_owner`, `can_manage_comic`, `can_edit`, `can_publish`, `can_moderate`, `can_contribute`.
-- Tests: `tests/test_comics_models.py`, `tests/test_comics_roles.py`, `tests/test_comics_pages.py`, `tests/test_comics_services.py`.
+- Tests: `tests/test_comics_models.py`, `tests/test_comics_roles.py`, `tests/test_comics_pages.py`, `tests/test_comics_services.py`, `tests/test_comics_ids.py`.
 
 ---
 
@@ -118,10 +130,9 @@ Expected: FAIL/ERROR — `comics.models` has no `Comic`/`Tag` and `comics.servic
 Create `comics/models.py`:
 
 ```python
-import uuid
-
 from django.db import models
 
+from core.models import UUIDModel
 from federation.activitypub import Audience
 
 
@@ -135,7 +146,7 @@ class FederationMode(models.TextChoices):
     LOCAL_ONLY = "local_only", "Local only"
 
 
-class Tag(models.Model):
+class Tag(UUIDModel):
     name = models.CharField(max_length=100, unique=True)
     slug = models.SlugField(max_length=100, unique=True)
 
@@ -143,8 +154,7 @@ class Tag(models.Model):
         return self.name
 
 
-class Comic(models.Model):
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+class Comic(UUIDModel):
     actor = models.OneToOneField(
         "actors.Actor", on_delete=models.PROTECT, related_name="comic"
     )
@@ -164,11 +174,9 @@ class Comic(models.Model):
         default=FederationMode.FEDERATED,
     )
     tags = models.ManyToManyField(Tag, blank=True, related_name="comics")
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        ordering = ["title"]
+        ordering = ["title", "id"]
 
     def __str__(self):
         return self.title
@@ -542,28 +550,30 @@ Expected: FAIL/ERROR — `Series`/`Page` do not exist.
 Append to `comics/models.py`:
 
 ```python
-class Series(models.Model):
+class Series(UUIDModel):
     comic = models.ForeignKey(Comic, on_delete=models.CASCADE, related_name="series")
     title = models.CharField(max_length=255)
     slug = models.SlugField(max_length=255)
     description = models.TextField(blank=True, default="")
     position = models.PositiveIntegerField(default=0)
-    created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         constraints = [
             models.UniqueConstraint(
                 fields=["comic", "slug"], name="unique_series_slug_per_comic"
-            )
+            ),
+            models.UniqueConstraint(
+                fields=["comic", "position"], name="unique_series_position"
+            ),
         ]
-        ordering = ["comic", "position"]
+        ordering = ["comic", "position", "id"]
         verbose_name_plural = "series"
 
     def __str__(self):
         return self.title
 
 
-class Chapter(models.Model):
+class Chapter(UUIDModel):
     series = models.ForeignKey(Series, on_delete=models.CASCADE, related_name="chapters")
     title = models.CharField(max_length=255)
     position = models.PositiveIntegerField(default=0)
@@ -586,8 +596,7 @@ class PageStatus(models.TextChoices):
     PUBLISHED = "published", "Published"
 
 
-class Page(models.Model):
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+class Page(UUIDModel):
     series = models.ForeignKey(Series, on_delete=models.CASCADE, related_name="pages")
     chapter = models.ForeignKey(
         Chapter,
@@ -631,8 +640,6 @@ class Page(models.Model):
     ap_id = models.URLField(blank=True, default="")
     scheduled_for = models.DateTimeField(null=True, blank=True)
     published_at = models.DateTimeField(null=True, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         constraints = [
@@ -640,7 +647,7 @@ class Page(models.Model):
                 fields=["series", "position"], name="unique_page_position"
             )
         ]
-        ordering = ["series", "position"]
+        ordering = ["series", "position", "id"]
 
     def __str__(self):
         return f"{self.series} #{self.position}"

@@ -1,10 +1,9 @@
-import uuid
-
 from django.conf import settings
 from django.db import models
 from django.db.models import Q
 from django.utils.text import slugify
 
+from core.models import UUIDModel
 from federation.activitypub import Audience
 
 
@@ -18,7 +17,7 @@ class FederationMode(models.TextChoices):
     LOCAL_ONLY = "local_only", "Local only"
 
 
-class Tag(models.Model):
+class Tag(UUIDModel):
     name = models.CharField(max_length=100, unique=True)
     slug = models.SlugField(max_length=100, unique=True)
 
@@ -26,8 +25,7 @@ class Tag(models.Model):
         return self.name
 
 
-class Comic(models.Model):
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+class Comic(UUIDModel):
     actor = models.OneToOneField(
         "actors.Actor", on_delete=models.PROTECT, related_name="comic"
     )
@@ -47,8 +45,6 @@ class Comic(models.Model):
         default=FederationMode.FEDERATED,
     )
     tags = models.ManyToManyField(Tag, blank=True, related_name="comics")
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ["title", "id"]
@@ -96,13 +92,12 @@ class ComicRole(models.Model):
         return f"{self.user} is {self.role} of {self.comic}"
 
 
-class Series(models.Model):
+class Series(UUIDModel):
     comic = models.ForeignKey(Comic, on_delete=models.CASCADE, related_name="series")
     title = models.CharField(max_length=255)
     slug = models.SlugField(max_length=255)
     description = models.TextField(blank=True, default="")
     position = models.PositiveIntegerField(default=0)
-    created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         constraints = [
@@ -120,7 +115,7 @@ class Series(models.Model):
         return self.title
 
 
-class Chapter(models.Model):
+class Chapter(UUIDModel):
     series = models.ForeignKey(
         Series, on_delete=models.CASCADE, related_name="chapters"
     )
@@ -145,8 +140,7 @@ class PageStatus(models.TextChoices):
     PUBLISHED = "published", "Published"
 
 
-class Page(models.Model):
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+class Page(UUIDModel):
     series = models.ForeignKey(Series, on_delete=models.CASCADE, related_name="pages")
     chapter = models.ForeignKey(
         Chapter,
@@ -190,8 +184,6 @@ class Page(models.Model):
     ap_id = models.URLField(blank=True, default="")
     scheduled_for = models.DateTimeField(null=True, blank=True)
     published_at = models.DateTimeField(null=True, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         constraints = [
