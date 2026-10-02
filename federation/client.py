@@ -1,6 +1,7 @@
 import ipaddress
 import json
 from email.utils import formatdate
+from socket import gaierror, getaddrinfo
 from urllib.parse import urlparse
 
 import requests
@@ -39,7 +40,14 @@ def host_allowed(url: str) -> bool:
     try:
         address = ipaddress.ip_address(host)
     except ValueError:
-        return True
+        try:
+            infos = getaddrinfo(host, None)
+        except gaierror:
+            return False
+        if not infos:
+            return False
+        addresses = {info[4][0] for info in infos}
+        return all(ipaddress.ip_address(item).is_global for item in addresses)
     return address.is_global
 
 

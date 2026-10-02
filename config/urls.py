@@ -13,5 +13,6 @@ urlpatterns = [
     ),
     path("accounts/", include("allauth.urls")),
     path("healthz", healthz, name="healthz"),
+    path("", include("federation.urls")),
     path("", include("actors.urls")),
 ]
