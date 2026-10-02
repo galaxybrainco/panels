@@ -1,10 +1,21 @@
-from django.core.exceptions import ValidationError
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import IntegrityError, transaction
+from django.db.models import Max
+from django.utils.text import slugify
 
 from actors.handles import validate_handle
 from actors.models import ActorType
 from actors.services import create_local_actor
-from comics.models import Comic, ComicRole, ContentRating, FederationMode
+from comics import permissions
+from comics.models import (
+    Comic,
+    ComicRole,
+    ContentRating,
+    FederationMode,
+    Page,
+    PageStatus,
+    Series,
+)
 from federation.activitypub import Audience
 
 
@@ -45,3 +56,50 @@ def create_comic(
     if tags:
         comic.set_tags(tags)
     return comic
+
+
+def _next_position(queryset):
+    current = queryset.aggregate(Max("position"))["position__max"]
+    return (current or 0) + 1
+
+
+def create_series(user, comic, title, *, slug=None, description="", position=None):
+    if not permissions.can_edit(user, comic):
+        raise PermissionDenied("You cannot manage this comic's series.")
+    series = Series(
+        comic=comic,
+        title=title,
+        slug=slug or slugify(title),
+        description=description,
+        position=position if position is not None else _next_position(comic.series),
+    )
+    series.save()
+    return series
+
+
+def create_page(
+    user,
+    series,
+    *,
+    title="",
+    chapter=None,
+    audience=None,
+    federation=None,
+    **fields,
+):
+    comic = series.comic
+    if not permissions.can_contribute(user, comic):
+        raise PermissionDenied("You cannot contribute to this comic.")
+    page = Page(
+        series=series,
+        chapter=chapter,
+        title=title,
+        position=fields.pop("position", _next_position(series.pages)),
+        audience=audience or comic.default_audience,
+        federation=federation or comic.default_federation,
+        author=user,
+        status=PageStatus.DRAFT,
+        **fields,
+    )
+    page.save()
+    return page
