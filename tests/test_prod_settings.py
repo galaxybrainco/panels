@@ -77,3 +77,10 @@ def test_prod_settings_reject_dev_email_backend(monkeypatch):
             secret_key="s" * 50,
             email_backend="django.core.mail.backends.console.EmailBackend",
         )
+
+
+def test_prod_settings_use_a_shared_cache(monkeypatch):
+    settings = _reload_prod(monkeypatch, secret_key="s" * 50)
+    assert settings.CACHES["default"]["BACKEND"] == (
+        "django.core.cache.backends.db.DatabaseCache"
+    )
