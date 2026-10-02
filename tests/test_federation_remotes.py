@@ -1,5 +1,6 @@
 import pytest
 from cryptography.hazmat.primitives import serialization
+from django.core.cache import cache
 
 from actors.models import Actor, Instance
 from actors.services import create_local_actor
@@ -7,6 +8,13 @@ from federation.keys import ed25519_multikey, load_actor_keys
 from federation.remotes import fetch_remote_actor, resolve_actor_by_key_id
 
 REMOTE = "https://other.test/actors/bob"
+
+
+@pytest.fixture(autouse=True)
+def _clear_cache():
+    cache.clear()
+    yield
+    cache.clear()
 
 
 def _remote_document():

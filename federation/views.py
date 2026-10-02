@@ -1,15 +1,18 @@
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404
+from django.views.decorators.csrf import csrf_exempt
 
 from actors.models import Actor
 from federation import collections
 from federation.inbound import process_inbox
 
 
+@csrf_exempt
 def shared_inbox(request):
     return process_inbox(request)
 
 
+@csrf_exempt
 def actor_inbox(request, handle):
     get_object_or_404(Actor, handle=handle, domain="")
     return process_inbox(request)

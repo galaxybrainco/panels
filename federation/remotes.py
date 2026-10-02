@@ -2,15 +2,31 @@ import base64
 from urllib.parse import urlparse
 
 import base58
+from django.core.cache import cache
 from django.utils import timezone
 
 from actors.models import Actor, ActorType, Instance
 from federation import client
 from federation.keys import rsa_public_key_from_actor
 
+FETCH_LIMIT = 30
+FETCH_WINDOW = 60
+FETCH_FAILED_TTL = 300
+
 
 def _split_key_id(key_id):
     return key_id.split("#", 1)[0]
+
+
+def _fetch_allowed(domain) -> bool:
+    key = f"federation:fetch:{domain}"
+    if cache.add(key, 1, timeout=FETCH_WINDOW):
+        return True
+    try:
+        return cache.incr(key) <= FETCH_LIMIT
+    except ValueError:
+        cache.set(key, 1, timeout=FETCH_WINDOW)
+        return True
 
 
 def _ed25519_public_key(document):
@@ -27,8 +43,16 @@ def _ed25519_public_key(document):
 
 
 def fetch_remote_actor(ap_id):
+    failed_key = f"federation:fetch-failed:{ap_id}"
+    if cache.get(failed_key):
+        return None
+    domain = urlparse(ap_id).netloc
+    if not _fetch_allowed(domain):
+        cache.set(failed_key, 1, timeout=FETCH_FAILED_TTL)
+        return None
     document = client.fetch_json(ap_id)
     if not isinstance(document, dict):
+        cache.set(failed_key, 1, timeout=FETCH_FAILED_TTL)
         return None
     domain = urlparse(ap_id).netloc
     Instance.objects.get_or_create(domain=domain)

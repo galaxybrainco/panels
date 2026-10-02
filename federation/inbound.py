@@ -8,9 +8,10 @@ from django.http import JsonResponse
 
 from actors.models import Instance
 from federation import handlers, http_signatures, remotes, rfc9421
-from federation.models import Activity
+from federation.models import Activity, ActivityStatus
 
 INBOUND_LIMIT = 120
+INBOUND_ACTOR_LIMIT = 120
 INBOUND_WINDOW = 60
 
 
@@ -67,42 +68,43 @@ def verify_inbound(request, resolve_public_key):
     return None
 
 
-def _throttle(identifier) -> bool:
+def _throttle(identifier, limit) -> bool:
     key = f"federation:inbound:{identifier}"
     if cache.add(key, 1, timeout=INBOUND_WINDOW):
         return True
     try:
-        return cache.incr(key) <= INBOUND_LIMIT
+        return cache.incr(key) <= limit
     except ValueError:
         cache.set(key, 1, timeout=INBOUND_WINDOW)
         return True
 
 
 def _source_identifier(request):
-    forwarded = request.META.get("HTTP_X_FORWARDED_FOR", "")
-    return forwarded.split(",")[0].strip() or request.META.get("REMOTE_ADDR", "")
+    return request.META.get("REMOTE_ADDR", "")
 
 
-def _strip_media(activity):
-    obj = activity.get("object")
-    if isinstance(obj, dict) and "attachment" in obj:
-        activity = {
-            **activity,
-            "object": {k: v for k, v in obj.items() if k != "attachment"},
+def _strip_media(value):
+    if isinstance(value, dict):
+        return {
+            key: _strip_media(item)
+            for key, item in value.items()
+            if key != "attachment"
         }
-    return activity
+    if isinstance(value, list):
+        return [_strip_media(item) for item in value]
+    return value
 
 
 def process_inbox(request):
     if request.method != "POST":
         return JsonResponse({"error": "method not allowed"}, status=405)
-    if not _throttle(_source_identifier(request)):
+    if not _throttle(f"ip:{_source_identifier(request)}", INBOUND_LIMIT):
         return JsonResponse({"error": "rate limited"}, status=429)
     try:
-        activity = json.loads(request.body or b"{}")
+        document = json.loads(request.body or b"{}")
     except ValueError:
         return JsonResponse({"error": "invalid json"}, status=400)
-    if not isinstance(activity, dict) or not activity.get("id"):
+    if not isinstance(document, dict) or not document.get("id"):
         return JsonResponse({"error": "invalid activity"}, status=400)
 
     signer = verify_inbound(request, remotes.public_key_for_key_id)
@@ -111,8 +113,10 @@ def process_inbox(request):
     actor = remotes.resolve_actor_by_key_id(signer.key_id)
     if actor is None:
         return JsonResponse({"error": "unknown actor"}, status=401)
-    if activity.get("actor") != actor.ap_id:
+    if document.get("actor") != actor.ap_id:
         return JsonResponse({"error": "actor mismatch"}, status=403)
+    if not _throttle(f"actor:{actor.ap_id}", INBOUND_ACTOR_LIMIT):
+        return JsonResponse({"error": "rate limited"}, status=429)
 
     instance = Instance.objects.filter(domain=urlparse(actor.ap_id).netloc).first()
     if instance is not None and instance.blocked:
@@ -120,19 +124,42 @@ def process_inbox(request):
     if (
         instance is not None
         and instance.reject_reports
-        and activity.get("type") == "Flag"
+        and document.get("type") == "Flag"
     ):
         return JsonResponse({"accepted": True}, status=202)
     if instance is not None and instance.reject_media:
-        activity = _strip_media(activity)
+        document = _strip_media(document)
 
-    if Activity.objects.filter(ap_id=activity["id"]).exists():
-        return JsonResponse({"accepted": True, "duplicate": True}, status=202)
-    stored = Activity.objects.create(
-        ap_id=activity["id"],
-        type=activity.get("type", ""),
-        actor=actor,
-        payload=activity,
+    stored, created = Activity.objects.get_or_create(
+        ap_id=document["id"],
+        defaults={
+            "type": document.get("type", ""),
+            "actor": actor,
+            "payload": document,
+        },
     )
-    handlers.dispatch(stored)
+    if not created and stored.status == ActivityStatus.PROCESSED:
+        return JsonResponse({"accepted": True, "duplicate": True}, status=202)
+    if not created:
+        stored.type = document.get("type", "")
+        stored.actor = actor
+        stored.payload = document
+        stored.status = ActivityStatus.RECEIVED
+        stored.error = ""
+        stored.save(
+            update_fields=[
+                "type",
+                "actor",
+                "payload",
+                "status",
+                "error",
+                "updated_at",
+            ]
+        )
+    try:
+        handlers.dispatch(stored)
+    except Exception as exc:
+        stored.status = ActivityStatus.REJECTED
+        stored.error = str(exc)
+        stored.save(update_fields=["status", "error", "updated_at"])
     return JsonResponse({"accepted": True}, status=202)

@@ -80,6 +80,7 @@ class Activity(models.Model):
         max_length=16, choices=ActivityStatus.choices, default=ActivityStatus.RECEIVED
     )
     payload = models.JSONField()
+    error = models.TextField(blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

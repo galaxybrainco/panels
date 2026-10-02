@@ -68,3 +68,22 @@ def test_unknown_actor_collection_returns_404(client):
         client.get(reverse("actor-outbox", kwargs={"handle": "ghost"})).status_code
         == 404
     )
+
+
+@pytest.mark.django_db
+def test_actor_outbox_pagination_links(client):
+    actor = create_local_actor("alice")
+    for index in range(25):
+        _outbound_activity(actor, index)
+    first = client.get(
+        reverse("actor-outbox", kwargs={"handle": "alice"}), {"page": 1}
+    ).json()
+    assert "next" in first
+    assert "prev" not in first
+    assert len(first["orderedItems"]) == 20
+    second = client.get(
+        reverse("actor-outbox", kwargs={"handle": "alice"}), {"page": 2}
+    ).json()
+    assert "prev" in second
+    assert "next" not in second
+    assert len(second["orderedItems"]) == 5

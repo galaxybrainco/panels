@@ -83,6 +83,22 @@ def test_fetch_json_rejects_private_and_link_local_addresses():
 
 @pytest.mark.django_db
 @responses.activate
+def test_fetch_json_rejects_hostname_resolving_to_private_ip(monkeypatch):
+    import socket
+
+    create_local_actor("instance", is_instance_actor=True)
+    monkeypatch.setattr(
+        "federation.client.socket.getaddrinfo",
+        lambda host, port, *args, **kwargs: [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.1", 0))
+        ],
+    )
+    assert fetch_json("https://evil.test/actors/bob") is None
+    assert len(responses.calls) == 0
+
+
+@pytest.mark.django_db
+@responses.activate
 def test_fetch_json_does_not_follow_redirects():
     create_local_actor("instance", is_instance_actor=True)
     responses.add(
