@@ -18,6 +18,20 @@ from comics.models import (
 )
 from federation.activitypub import Audience
 
+PAGE_OVERRIDE_FIELDS = {
+    "alt_text",
+    "transcript",
+    "author_commentary",
+    "content_warning",
+    "sensitive",
+}
+
+
+def _validate_choice(value, choices, field):
+    if value not in choices.values:
+        raise ValidationError({field: f"Invalid value: {value!r}."})
+    return value
+
 
 @transaction.atomic
 def create_comic(
@@ -34,6 +48,9 @@ def create_comic(
     actor_type=ActorType.PERSON,
 ):
     slug = validate_handle(handle)
+    _validate_choice(content_rating, ContentRating, "content_rating")
+    _validate_choice(default_audience, Audience, "default_audience")
+    _validate_choice(default_federation, FederationMode, "default_federation")
     if Comic.objects.filter(slug=slug).exists():
         raise ValidationError("That slug is already taken.")
     try:
@@ -63,13 +80,20 @@ def _next_position(queryset):
     return (current or 0) + 1
 
 
+@transaction.atomic
 def create_series(user, comic, title, *, slug=None, description="", position=None):
     if not permissions.can_edit(user, comic):
         raise PermissionDenied("You cannot manage this comic's series.")
+    comic = Comic.objects.select_for_update().get(pk=comic.pk)
+    series_slug = slug or slugify(title)
+    if not series_slug:
+        raise ValidationError("A series slug is required.")
+    if Series.objects.filter(comic=comic, slug=series_slug).exists():
+        raise ValidationError("That series slug is already taken.")
     series = Series(
         comic=comic,
         title=title,
-        slug=slug or slugify(title),
+        slug=series_slug,
         description=description,
         position=position if position is not None else _next_position(comic.series),
     )
@@ -77,6 +101,7 @@ def create_series(user, comic, title, *, slug=None, description="", position=Non
     return series
 
 
+@transaction.atomic
 def create_page(
     user,
     series,
@@ -88,15 +113,27 @@ def create_page(
     **fields,
 ):
     comic = series.comic
-    if not permissions.can_contribute(user, comic):
+    if not permissions.can_author(user, comic):
         raise PermissionDenied("You cannot contribute to this comic.")
+    unknown = set(fields) - PAGE_OVERRIDE_FIELDS
+    if unknown:
+        raise TypeError(f"Unsupported page fields: {sorted(unknown)}")
+    if chapter is not None and chapter.series_id != series.id:
+        raise ValidationError("Chapter does not belong to this series.")
+    audience = _validate_choice(
+        audience or comic.default_audience, Audience, "audience"
+    )
+    federation = _validate_choice(
+        federation or comic.default_federation, FederationMode, "federation"
+    )
+    series = Series.objects.select_for_update().get(pk=series.pk)
     page = Page(
         series=series,
         chapter=chapter,
         title=title,
-        position=fields.pop("position", _next_position(series.pages)),
-        audience=audience or comic.default_audience,
-        federation=federation or comic.default_federation,
+        position=_next_position(series.pages),
+        audience=audience,
+        federation=federation,
         author=user,
         status=PageStatus.DRAFT,
         **fields,

@@ -23,6 +23,13 @@ def test_series_slug_unique_per_comic(comic):
 
 
 @pytest.mark.django_db
+def test_series_position_unique_per_comic(comic):
+    Series.objects.create(comic=comic, title="One", slug="one", position=1)
+    with pytest.raises(IntegrityError), transaction.atomic():
+        Series.objects.create(comic=comic, title="Two", slug="two", position=1)
+
+
+@pytest.mark.django_db
 def test_page_position_unique_per_series(comic):
     series = Series.objects.create(comic=comic, title="One", slug="one", position=1)
     Page.objects.create(series=series, position=1)

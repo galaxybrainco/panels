@@ -4,6 +4,7 @@ from django.db import IntegrityError, transaction
 
 from comics.models import ComicRole
 from comics.permissions import (
+    can_author,
     can_contribute,
     can_edit,
     can_manage_comic,
@@ -13,6 +14,7 @@ from comics.permissions import (
     role_for,
 )
 from comics.services import create_comic
+from comics.signals import OwnerRequiredError
 
 
 def _user(email):
@@ -69,7 +71,19 @@ def test_role_capabilities():
     assert can_edit(contributor, comic) is False
     assert can_publish(contributor, comic) is False
     assert can_contribute(contributor, comic) is True
+    assert can_author(contributor, comic) is True
     assert can_moderate(moderator, comic) is True
     assert can_edit(moderator, comic) is False
+    assert can_author(moderator, comic) is False
     assert role_for(outsider, comic) is None
     assert can_contribute(outsider, comic) is False
+
+
+@pytest.mark.django_db
+def test_owner_cannot_be_deleted_without_transfer():
+    owner = _user("owner@example.com")
+    comic = create_comic(owner, "lunarbaboon", "Lunar Baboon")
+    assert ComicRole.objects.filter(comic=comic, role=ComicRole.Role.OWNER).count() == 1
+    with pytest.raises(OwnerRequiredError), transaction.atomic():
+        owner.delete()
+    assert ComicRole.objects.filter(comic=comic, role=ComicRole.Role.OWNER).count() == 1

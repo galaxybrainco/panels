@@ -51,7 +51,7 @@ class Comic(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        ordering = ["title"]
+        ordering = ["title", "id"]
 
     def __str__(self):
         return self.title
@@ -108,9 +108,12 @@ class Series(models.Model):
         constraints = [
             models.UniqueConstraint(
                 fields=["comic", "slug"], name="unique_series_slug_per_comic"
-            )
+            ),
+            models.UniqueConstraint(
+                fields=["comic", "position"], name="unique_series_position"
+            ),
         ]
-        ordering = ["comic", "position"]
+        ordering = ["comic", "position", "id"]
         verbose_name_plural = "series"
 
     def __str__(self):
@@ -196,7 +199,7 @@ class Page(models.Model):
                 fields=["series", "position"], name="unique_page_position"
             )
         ]
-        ordering = ["series", "position"]
+        ordering = ["series", "position", "id"]
 
     def __str__(self):
         return f"{self.series} #{self.position}"

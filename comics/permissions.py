@@ -37,3 +37,11 @@ def can_moderate(user, comic) -> bool:
 
 def can_contribute(user, comic) -> bool:
     return role_for(user, comic) is not None
+
+
+def can_author(user, comic) -> bool:
+    return role_for(user, comic) in {
+        ComicRole.Role.OWNER,
+        ComicRole.Role.EDITOR,
+        ComicRole.Role.CONTRIBUTOR,
+    }
