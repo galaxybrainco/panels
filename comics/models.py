@@ -94,3 +94,109 @@ class ComicRole(models.Model):
 
     def __str__(self):
         return f"{self.user} is {self.role} of {self.comic}"
+
+
+class Series(models.Model):
+    comic = models.ForeignKey(Comic, on_delete=models.CASCADE, related_name="series")
+    title = models.CharField(max_length=255)
+    slug = models.SlugField(max_length=255)
+    description = models.TextField(blank=True, default="")
+    position = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["comic", "slug"], name="unique_series_slug_per_comic"
+            )
+        ]
+        ordering = ["comic", "position"]
+        verbose_name_plural = "series"
+
+    def __str__(self):
+        return self.title
+
+
+class Chapter(models.Model):
+    series = models.ForeignKey(
+        Series, on_delete=models.CASCADE, related_name="chapters"
+    )
+    title = models.CharField(max_length=255)
+    position = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["series", "position"], name="unique_chapter_position"
+            )
+        ]
+        ordering = ["series", "position"]
+
+    def __str__(self):
+        return self.title
+
+
+class PageStatus(models.TextChoices):
+    DRAFT = "draft", "Draft"
+    SCHEDULED = "scheduled", "Scheduled"
+    PUBLISHED = "published", "Published"
+
+
+class Page(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    series = models.ForeignKey(Series, on_delete=models.CASCADE, related_name="pages")
+    chapter = models.ForeignKey(
+        Chapter,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="pages",
+    )
+    position = models.PositiveIntegerField(default=0)
+    title = models.CharField(max_length=255, blank=True, default="")
+    alt_text = models.TextField(blank=True, default="")
+    transcript = models.TextField(blank=True, default="")
+    author_commentary = models.TextField(blank=True, default="")
+    author = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="authored_pages",
+    )
+    published_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="published_pages",
+    )
+    status = models.CharField(
+        max_length=16, choices=PageStatus.choices, default=PageStatus.DRAFT
+    )
+    audience = models.CharField(
+        max_length=16, choices=Audience.choices, default=Audience.PUBLIC
+    )
+    federation = models.CharField(
+        max_length=16,
+        choices=FederationMode.choices,
+        default=FederationMode.FEDERATED,
+    )
+    content_warning = models.CharField(max_length=255, blank=True, default="")
+    sensitive = models.BooleanField(default=False)
+    ap_id = models.URLField(blank=True, default="")
+    scheduled_for = models.DateTimeField(null=True, blank=True)
+    published_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["series", "position"], name="unique_page_position"
+            )
+        ]
+        ordering = ["series", "position"]
+
+    def __str__(self):
+        return f"{self.series} #{self.position}"
