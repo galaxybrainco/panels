@@ -43,28 +43,32 @@ def verify_body_digest(message) -> bool:
     return not body
 
 
-def verify_inbound(request, resolve_public_key):
-    message = request_message(request)
-    recorded = {}
+class _RecordingKeyResolver:
+    def __init__(self, resolve_public_key):
+        self._resolve_public_key = resolve_public_key
+        self.key_id = None
 
-    def resolve_cavage(key_id):
-        recorded["cavage"] = key_id
-        return resolve_public_key(key_id)
-
-    if http_signatures.verify_cavage(message, resolve_cavage) and verify_body_digest(
-        message
-    ):
-        return VerifiedSigner(key_id=recorded["cavage"], scheme="cavage")
-
-    def resolve_rfc(key_id):
-        recorded["rfc9421"] = key_id
-        key = resolve_public_key(key_id)
+    def __call__(self, key_id):
+        self.key_id = key_id
+        key = self._resolve_public_key(key_id)
         if key is None:
             raise KeyError(key_id)
         return key
 
-    if rfc9421.verify_rfc9421(message, resolve_rfc) and verify_body_digest(message):
-        return VerifiedSigner(key_id=recorded["rfc9421"], scheme="rfc9421")
+
+def verify_inbound(request, resolve_public_key):
+    message = request_message(request)
+    resolver = _RecordingKeyResolver(resolve_public_key)
+
+    try:
+        cavage_verified = http_signatures.verify_cavage(message, resolver)
+    except KeyError:
+        cavage_verified = False
+    if cavage_verified and verify_body_digest(message):
+        return VerifiedSigner(key_id=resolver.key_id, scheme="cavage")
+
+    if rfc9421.verify_rfc9421(message, resolver) and verify_body_digest(message):
+        return VerifiedSigner(key_id=resolver.key_id, scheme="rfc9421")
     return None
 
 
