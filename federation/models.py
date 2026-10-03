@@ -1,6 +1,6 @@
-import uuid
-
 from django.db import models
+
+from core.models import UUIDModel
 
 
 class DeliveryStatus(models.TextChoices):
@@ -15,8 +15,7 @@ class SignatureScheme(models.TextChoices):
     RFC9421 = "rfc9421", "RFC 9421 HTTP Message Signatures"
 
 
-class Delivery(models.Model):
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+class Delivery(UUIDModel):
     inbox_url = models.URLField()
     activity = models.JSONField()
     actor = models.ForeignKey(
@@ -29,8 +28,6 @@ class Delivery(models.Model):
     max_attempts = models.PositiveIntegerField(default=6)
     next_attempt_at = models.DateTimeField(null=True, blank=True)
     last_error = models.TextField(blank=True, default="")
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         indexes = [models.Index(fields=["status", "next_attempt_at"])]
@@ -60,8 +57,7 @@ class ActivityDirection(models.TextChoices):
     OUTBOUND = "outbound", "Outbound"
 
 
-class Activity(models.Model):
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+class Activity(UUIDModel):
     ap_id = models.URLField(unique=True)
     type = models.CharField(max_length=64)
     actor = models.ForeignKey(
@@ -81,8 +77,6 @@ class Activity(models.Model):
     )
     payload = models.JSONField()
     error = models.TextField(blank=True, default="")
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         indexes = [models.Index(fields=["actor", "direction", "status"])]
