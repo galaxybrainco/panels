@@ -1,6 +1,6 @@
-import uuid
-
 from django.db import models
+
+from core.models import UUIDModel
 
 
 class ActorType(models.TextChoices):
@@ -10,8 +10,7 @@ class ActorType(models.TextChoices):
     ORGANIZATION = "Organization", "Organization"
 
 
-class Actor(models.Model):
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+class Actor(UUIDModel):
     ap_id = models.URLField(unique=True)
     type = models.CharField(
         max_length=32, choices=ActorType.choices, default=ActorType.PERSON
@@ -46,8 +45,6 @@ class Actor(models.Model):
         related_name="actor",
     )
     last_fetched_at = models.DateTimeField(null=True, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         constraints = [
@@ -65,7 +62,7 @@ class Actor(models.Model):
         return not self.domain
 
 
-class Instance(models.Model):
+class Instance(UUIDModel):
     domain = models.CharField(max_length=255, unique=True)
     software_name = models.CharField(max_length=255, blank=True, default="")
     software_version = models.CharField(max_length=255, blank=True, default="")
@@ -78,8 +75,6 @@ class Instance(models.Model):
     reject_reports = models.BooleanField(default=False)
 
     last_fetched_at = models.DateTimeField(null=True, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
         return self.domain
