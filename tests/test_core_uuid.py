@@ -2,6 +2,7 @@ import uuid
 
 import pytest
 from django.contrib.auth import get_user_model
+from django.db import models
 
 from actors.models import Instance
 from actors.services import create_local_actor
@@ -74,3 +75,14 @@ def test_user_model_keeps_date_joined():
     user = _user()
     assert user.date_joined is not None
     assert user.created_at is not None
+
+
+def test_third_party_user_foreign_keys_target_the_uuid_pk():
+    from allauth.account.models import EmailAddress
+    from allauth.mfa.models import Authenticator
+
+    user_pk = get_user_model()._meta.pk
+    assert isinstance(user_pk, models.UUIDField)
+    for model in (EmailAddress, Authenticator):
+        target = model._meta.get_field("user").target_field
+        assert target is user_pk, model.__name__
