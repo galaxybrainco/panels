@@ -168,6 +168,13 @@ class Page(UUIDModel):
         blank=True,
         related_name="published_pages",
     )
+    scheduled_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="scheduled_pages",
+    )
     status = models.CharField(
         max_length=16, choices=PageStatus.choices, default=PageStatus.DRAFT
     )
@@ -190,6 +197,9 @@ class Page(UUIDModel):
             models.UniqueConstraint(
                 fields=["series", "position"], name="unique_page_position"
             )
+        ]
+        indexes = [
+            models.Index(fields=["status", "scheduled_for"], name="page_due_idx")
         ]
         ordering = ["series", "position", "id"]
 

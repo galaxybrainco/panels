@@ -60,3 +60,35 @@ def unpublish_page(user, page):
     page.scheduled_for = None
     page.save(update_fields=["status", "published_at", "scheduled_for", "updated_at"])
     return page
+
+
+def schedule_page(user, page, when):
+    if not permissions.can_publish(user, page.series.comic):
+        raise PermissionDenied("You cannot schedule this page.")
+    if timezone.is_naive(when):
+        raise ValidationError(
+            {"scheduled_for": "A timezone-aware datetime is required."}
+        )
+    if when <= timezone.now():
+        raise ValidationError(
+            {"scheduled_for": "The scheduled time must be in the future."}
+        )
+    _enforce_publish_gates(page)
+    from comics.tasks import publish_scheduled_page
+
+    page.status = PageStatus.SCHEDULED
+    page.scheduled_for = when
+    page.scheduled_by = user
+    page.save(update_fields=["status", "scheduled_for", "scheduled_by", "updated_at"])
+    publish_scheduled_page.using(run_after=when).enqueue(str(page.id))
+    return page
+
+
+def unschedule_page(user, page):
+    if not permissions.can_publish(user, page.series.comic):
+        raise PermissionDenied("You cannot unschedule this page.")
+    page.status = PageStatus.DRAFT
+    page.scheduled_for = None
+    page.scheduled_by = None
+    page.save(update_fields=["status", "scheduled_for", "scheduled_by", "updated_at"])
+    return page
