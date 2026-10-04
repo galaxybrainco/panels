@@ -45,3 +45,7 @@ def can_author(user, comic) -> bool:
         ComicRole.Role.EDITOR,
         ComicRole.Role.CONTRIBUTOR,
     }
+
+
+def can_manage_collaborators(user, comic) -> bool:
+    return is_owner(user, comic)
