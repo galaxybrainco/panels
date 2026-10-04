@@ -18,7 +18,10 @@ class Command(BaseCommand):
         for page in due:
             try:
                 publishing.publish(
-                    page, published_by=page.scheduled_by, when=page.scheduled_for
+                    page,
+                    published_by=page.scheduled_by,
+                    when=page.scheduled_for,
+                    require_scheduled=True,
                 )
                 published += 1
             except ValidationError as exc:

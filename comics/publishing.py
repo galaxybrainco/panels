@@ -21,10 +21,17 @@ def _enforce_publish_gates(page) -> None:
 
 
 @transaction.atomic
-def publish(page, *, published_by=None, when=None):
-    """Lock and transition a page to PUBLISHED. Idempotent; enforces gates."""
+def publish(page, *, published_by=None, when=None, require_scheduled=False):
+    """Lock and transition a page to PUBLISHED. Idempotent; enforces gates.
+
+    With ``require_scheduled=True`` the transition is a no-op unless the locked
+    row is still SCHEDULED, so a task or sweep cannot resurrect a page that was
+    unscheduled after it was read.
+    """
     locked = Page.objects.select_for_update().get(pk=page.pk)
     if locked.status == PageStatus.PUBLISHED:
+        return locked
+    if require_scheduled and locked.status != PageStatus.SCHEDULED:
         return locked
     _enforce_publish_gates(locked)
     locked.status = PageStatus.PUBLISHED
@@ -52,16 +59,19 @@ def publish_page(user, page, *, when=None):
     return publish(page, published_by=user, when=when)
 
 
+@transaction.atomic
 def unpublish_page(user, page):
     if not permissions.can_publish(user, page.series.comic):
         raise PermissionDenied("You cannot unpublish this page.")
-    page.status = PageStatus.DRAFT
-    page.published_at = None
-    page.scheduled_for = None
-    page.save(update_fields=["status", "published_at", "scheduled_for", "updated_at"])
-    return page
+    locked = Page.objects.select_for_update().get(pk=page.pk)
+    locked.status = PageStatus.DRAFT
+    locked.published_at = None
+    locked.scheduled_for = None
+    locked.save(update_fields=["status", "published_at", "scheduled_for", "updated_at"])
+    return locked
 
 
+@transaction.atomic
 def schedule_page(user, page, when):
     if not permissions.can_publish(user, page.series.comic):
         raise PermissionDenied("You cannot schedule this page.")
@@ -73,22 +83,27 @@ def schedule_page(user, page, when):
         raise ValidationError(
             {"scheduled_for": "The scheduled time must be in the future."}
         )
-    _enforce_publish_gates(page)
+    locked = Page.objects.select_for_update().get(pk=page.pk)
+    if locked.status == PageStatus.PUBLISHED:
+        raise ValidationError({"status": "Unpublish the page before scheduling it."})
+    _enforce_publish_gates(locked)
     from comics.tasks import publish_scheduled_page
 
-    page.status = PageStatus.SCHEDULED
-    page.scheduled_for = when
-    page.scheduled_by = user
-    page.save(update_fields=["status", "scheduled_for", "scheduled_by", "updated_at"])
-    publish_scheduled_page.using(run_after=when).enqueue(str(page.id))
-    return page
+    locked.status = PageStatus.SCHEDULED
+    locked.scheduled_for = when
+    locked.scheduled_by = user
+    locked.save(update_fields=["status", "scheduled_for", "scheduled_by", "updated_at"])
+    publish_scheduled_page.using(run_after=when).enqueue(str(locked.id))
+    return locked
 
 
+@transaction.atomic
 def unschedule_page(user, page):
     if not permissions.can_publish(user, page.series.comic):
         raise PermissionDenied("You cannot unschedule this page.")
-    page.status = PageStatus.DRAFT
-    page.scheduled_for = None
-    page.scheduled_by = None
-    page.save(update_fields=["status", "scheduled_for", "scheduled_by", "updated_at"])
-    return page
+    locked = Page.objects.select_for_update().get(pk=page.pk)
+    locked.status = PageStatus.DRAFT
+    locked.scheduled_for = None
+    locked.scheduled_by = None
+    locked.save(update_fields=["status", "scheduled_for", "scheduled_by", "updated_at"])
+    return locked

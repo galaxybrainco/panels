@@ -38,6 +38,7 @@ def test_publish_page_is_idempotent():
     second = publish_page(owner, page)
     assert second.status == PageStatus.PUBLISHED
     assert second.published_at == stamp
+    assert second.ap_id == first.ap_id
 
 
 @pytest.mark.django_db

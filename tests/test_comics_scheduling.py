@@ -7,7 +7,7 @@ from django.utils import timezone
 from django_tasks_db.models import DBTaskResult
 
 from comics.models import ComicRole, Page, PageStatus
-from comics.publishing import schedule_page, unschedule_page
+from comics.publishing import publish, publish_page, schedule_page, unschedule_page
 from comics.services import create_comic, create_page, create_series
 from comics.tasks import publish_scheduled_page
 
@@ -106,3 +106,38 @@ def test_unschedule_returns_to_draft():
     assert unscheduled.status == PageStatus.DRAFT
     assert unscheduled.scheduled_for is None
     assert unscheduled.scheduled_by is None
+
+
+@pytest.mark.django_db
+def test_publish_with_require_scheduled_is_noop_for_draft_page():
+    owner = _user()
+    _, page = _page(owner)
+    result = publish(page, require_scheduled=True)
+    result.refresh_from_db()
+    assert result.status == PageStatus.DRAFT
+
+
+@pytest.mark.django_db
+def test_schedule_rejects_already_published_page():
+    owner = _user()
+    _, page = _page(owner)
+    publish_page(owner, page)
+    with pytest.raises(ValidationError):
+        schedule_page(owner, page, timezone.now() + timedelta(hours=1))
+
+
+@pytest.mark.django_db
+def test_task_leaves_page_scheduled_when_gates_fail():
+    owner = _user()
+    comic = create_comic(owner, "lunarbaboon", "Lunar Baboon")
+    series = create_series(owner, comic, "Main Story")
+    page = create_page(owner, series, alt_text="")
+    page.status = PageStatus.SCHEDULED
+    page.scheduled_for = timezone.now() - timedelta(minutes=1)
+    page.scheduled_by = owner
+    page.save()
+
+    publish_scheduled_page.func(str(page.id))
+
+    page.refresh_from_db()
+    assert page.status == PageStatus.SCHEDULED
