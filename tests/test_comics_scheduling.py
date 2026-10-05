@@ -10,6 +10,7 @@ from comics.models import ComicRole, Page, PageStatus
 from comics.publishing import publish, publish_page, schedule_page, unschedule_page
 from comics.services import create_comic, create_page, create_series
 from comics.tasks import publish_scheduled_page
+from tests.media_support import make_media
 
 
 def _user(email="owner@example.com"):
@@ -19,7 +20,9 @@ def _user(email="owner@example.com"):
 def _page(owner):
     comic = create_comic(owner, "lunarbaboon", "Lunar Baboon")
     series = create_series(owner, comic, "Main Story")
-    return comic, create_page(owner, series, alt_text="A panel")
+    page = create_page(owner, series)
+    make_media(page, position=1, alt_text="A panel")
+    return comic, page
 
 
 @pytest.mark.django_db
@@ -131,7 +134,7 @@ def test_task_leaves_page_scheduled_when_gates_fail():
     owner = _user()
     comic = create_comic(owner, "lunarbaboon", "Lunar Baboon")
     series = create_series(owner, comic, "Main Story")
-    page = create_page(owner, series, alt_text="")
+    page = create_page(owner, series)
     page.status = PageStatus.SCHEDULED
     page.scheduled_for = timezone.now() - timedelta(minutes=1)
     page.scheduled_by = owner

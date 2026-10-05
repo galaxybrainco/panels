@@ -151,7 +151,6 @@ class Page(UUIDModel):
     )
     position = models.PositiveIntegerField(default=0)
     title = models.CharField(max_length=255, blank=True, default="")
-    alt_text = models.TextField(blank=True, default="")
     transcript = models.TextField(blank=True, default="")
     author_commentary = models.TextField(blank=True, default="")
     author = models.ForeignKey(

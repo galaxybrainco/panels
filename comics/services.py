@@ -19,7 +19,6 @@ from comics.models import (
 from federation.activitypub import Audience
 
 PAGE_OVERRIDE_FIELDS = {
-    "alt_text",
     "transcript",
     "author_commentary",
     "content_warning",
