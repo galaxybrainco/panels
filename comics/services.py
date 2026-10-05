@@ -25,6 +25,16 @@ PAGE_OVERRIDE_FIELDS = {
     "sensitive",
 }
 
+UPDATE_FIELDS = {
+    "title",
+    "transcript",
+    "author_commentary",
+    "content_warning",
+    "sensitive",
+    "audience",
+    "federation",
+}
+
 
 def _validate_choice(value, choices, field):
     if value not in choices.values:
@@ -139,3 +149,36 @@ def create_page(
     )
     page.save()
     return page
+
+
+@transaction.atomic
+def update_page(user, page, **fields):
+    comic = page.series.comic
+    if not permissions.can_author(user, comic):
+        raise PermissionDenied("You cannot edit this page.")
+    unknown = set(fields) - UPDATE_FIELDS
+    if unknown:
+        raise TypeError(f"Unsupported page fields: {sorted(unknown)}")
+    locked = Page.objects.select_for_update().get(pk=page.pk)
+    if locked.status == PageStatus.PUBLISHED and not permissions.can_publish(
+        user, comic
+    ):
+        raise PermissionDenied("You cannot edit a published page.")
+    if "audience" in fields:
+        _validate_choice(fields["audience"], Audience, "audience")
+    if "federation" in fields:
+        _validate_choice(fields["federation"], FederationMode, "federation")
+
+    from comics import federation
+
+    was_plan = federation.federation_plan(locked)
+    for name, value in fields.items():
+        setattr(locked, name, value)
+    locked.save()
+    if locked.status == PageStatus.PUBLISHED:
+        plan = federation.federation_plan(locked)
+        if plan.emit:
+            federation.emit_page_activity(locked, "Update")
+        elif was_plan.emit:
+            federation.emit_page_activity(locked, "Delete", plan=was_plan)
+    return locked

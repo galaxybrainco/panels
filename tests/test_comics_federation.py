@@ -1,5 +1,6 @@
 import pytest
 from django.contrib.auth import get_user_model
+from django.core.exceptions import PermissionDenied
 from django.test import override_settings
 from django.utils import timezone
 
@@ -8,9 +9,14 @@ from comics.federation import (
     federation_plan,
     page_to_note,
 )
-from comics.models import FederationMode
+from comics.models import ComicRole, FederationMode
 from comics.publishing import publish_page, unpublish_page
-from comics.services import create_comic, create_page, create_series
+from comics.services import (
+    create_comic,
+    create_page,
+    create_series,
+    update_page,
+)
 from federation import collections
 from federation.activitypub import PUBLIC, Audience
 from federation.models import Activity, ActivityDirection, ActivityStatus
@@ -174,3 +180,44 @@ def test_unpublish_emits_delete():
     publish_page(owner, page)
     unpublish_page(owner, page)
     assert Activity.objects.filter(type="Delete").count() == 1
+
+
+@pytest.mark.django_db
+def test_update_page_applies_fields_and_emits_update():
+    owner, _, _, page = _scene()
+    published = publish_page(owner, page)
+    update_page(owner, published, title="Retitled")
+    published.refresh_from_db()
+    assert published.title == "Retitled"
+    assert Activity.objects.filter(type="Update").count() == 1
+
+
+@pytest.mark.django_db
+def test_update_page_to_local_only_withdraws_with_delete():
+    owner, _, _, page = _scene()
+    published = publish_page(owner, page)
+    update_page(owner, published, federation=FederationMode.LOCAL_ONLY)
+    assert Activity.objects.filter(type="Update").count() == 0
+    assert Activity.objects.filter(type="Delete").count() == 1
+
+
+@pytest.mark.django_db
+def test_update_page_permissions():
+    owner, comic, _, page = _scene()
+    contributor = get_user_model().objects.create_user(
+        email="contributor@example.com", password="x"
+    )
+    ComicRole.objects.create(
+        comic=comic, user=contributor, role=ComicRole.Role.CONTRIBUTOR
+    )
+    assert update_page(contributor, page, title="Draft edit").title == "Draft edit"
+    published = publish_page(owner, page)
+    with pytest.raises(PermissionDenied):
+        update_page(contributor, published, title="Nope")
+
+
+@pytest.mark.django_db
+def test_update_page_rejects_unknown_fields():
+    owner, _, _, page = _scene()
+    with pytest.raises(TypeError):
+        update_page(owner, page, position=99)
