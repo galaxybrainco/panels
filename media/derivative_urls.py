@@ -1,4 +1,4 @@
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urljoin
 
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
@@ -15,13 +15,17 @@ class DerivativeKind(models.TextChoices):
 DERIVATIVE_SPECS = {
     DerivativeKind.THUMBNAIL: {"width": 400, "quality": 80, "format": "webp"},
     DerivativeKind.DISPLAY: {"width": 1600, "quality": 82, "format": "webp"},
-    DerivativeKind.FEDERATION: {"width": 4096, "quality": 85, "format": "jpeg"},
+    DerivativeKind.FEDERATION: {
+        "max_longest_side": 4096,
+        "quality": 85,
+        "format": "jpeg",
+    },
 }
 
 
 def _absolute_media_url(media) -> str:
-    base = settings.INSTANCE_URL.rstrip("/")
-    return f"{base}/{media.original.url.lstrip('/')}"
+    base = settings.INSTANCE_URL.rstrip("/") + "/"
+    return urljoin(base, media.original.url)
 
 
 class DerivativeBackend:
@@ -48,7 +52,14 @@ class BunnyOptimizerBackend(DerivativeBackend):
         self.base_url = base_url.rstrip("/")
 
     def url(self, media, kind) -> str:
-        query = urlencode(DERIVATIVE_SPECS[kind])
+        params = dict(DERIVATIVE_SPECS[kind])
+        cap = params.pop("max_longest_side", None)
+        if cap is not None:
+            if media.width >= media.height:
+                params["width"] = cap
+            else:
+                params["height"] = cap
+        query = urlencode(params)
         return f"{self.base_url}/{media.original.name.lstrip('/')}?{query}"
 
 

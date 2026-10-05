@@ -14,12 +14,19 @@ from media.derivative_urls import (
 
 
 class _StubOriginal:
-    name = "media/abc/original.png"
-    url = "media/abc/original.png"
+    def __init__(self, name="media/abc/original.png", url="media/abc/original.png"):
+        self.name = name
+        self.url = url
 
 
 class _StubMedia:
-    original = _StubOriginal()
+    def __init__(self, *, width=1000, height=800, name=None, url=None):
+        self.width = width
+        self.height = height
+        self.original = _StubOriginal(
+            name=name or "media/abc/original.png",
+            url=url or "media/abc/original.png",
+        )
 
 
 @pytest.fixture
@@ -32,6 +39,12 @@ def test_local_backend_returns_absolute_storage_url(media):
     assert url == "http://testserver/media/abc/original.png"
 
 
+def test_local_backend_preserves_absolute_storage_url():
+    media = _StubMedia(url="https://bucket.test/media/abc/original.png")
+    url = LocalDerivativeBackend().url(media, DerivativeKind.THUMBNAIL)
+    assert url == "https://bucket.test/media/abc/original.png"
+
+
 def test_bunny_backend_preserves_path_and_adds_transform_params(media):
     url = BunnyOptimizerBackend("https://cdn.test").url(media, DerivativeKind.DISPLAY)
     parsed = urlparse(url)
@@ -42,7 +55,8 @@ def test_bunny_backend_preserves_path_and_adds_transform_params(media):
     assert query == {"width": ["1600"], "quality": ["82"], "format": ["webp"]}
 
 
-def test_bunny_federation_variant_is_jpeg(media):
+def test_bunny_federation_caps_longest_side_for_landscape():
+    media = _StubMedia(width=8000, height=2000)
     query = parse_qs(
         urlparse(
             BunnyOptimizerBackend("https://cdn.test").url(
@@ -50,11 +64,22 @@ def test_bunny_federation_variant_is_jpeg(media):
             )
         ).query
     )
-    assert query["format"] == ["jpeg"]
-    assert query["width"] == ["4096"]
+    assert query == {"width": ["4096"], "quality": ["85"], "format": ["jpeg"]}
 
 
-def test_bunny_backend_requires_base_url(media):
+def test_bunny_federation_caps_longest_side_for_portrait():
+    media = _StubMedia(width=2000, height=8000)
+    query = parse_qs(
+        urlparse(
+            BunnyOptimizerBackend("https://cdn.test").url(
+                media, DerivativeKind.FEDERATION
+            )
+        ).query
+    )
+    assert query == {"height": ["4096"], "quality": ["85"], "format": ["jpeg"]}
+
+
+def test_bunny_backend_requires_base_url():
     with override_settings(MEDIA_CDN_BASE_URL=""):
         with pytest.raises(ImproperlyConfigured):
             BunnyOptimizerBackend()
