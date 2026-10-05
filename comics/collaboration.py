@@ -42,3 +42,36 @@ def invite_user(owner, comic, email, role):
         raise ValidationError(
             {"email": "That user already has a role on this comic."}
         ) from exc
+
+
+@transaction.atomic
+def change_role(owner, comic, user, role):
+    _require_owner(owner, comic)
+    _validate_assignable(role)
+    try:
+        membership = ComicRole.objects.select_for_update().get(comic=comic, user=user)
+    except ComicRole.DoesNotExist as exc:
+        raise ValidationError(
+            {"user": "That user is not a collaborator on this comic."}
+        ) from exc
+    if membership.role == ComicRole.Role.OWNER:
+        raise ValidationError(
+            {"user": "Transfer ownership to change the owner's role."}
+        )
+    membership.role = role
+    membership.save(update_fields=["role"])
+    return membership
+
+
+@transaction.atomic
+def remove_collaborator(owner, comic, user):
+    _require_owner(owner, comic)
+    try:
+        membership = ComicRole.objects.select_for_update().get(comic=comic, user=user)
+    except ComicRole.DoesNotExist as exc:
+        raise ValidationError(
+            {"user": "That user is not a collaborator on this comic."}
+        ) from exc
+    if membership.role == ComicRole.Role.OWNER:
+        raise ValidationError({"user": "Transfer ownership before removing the owner."})
+    membership.delete()
