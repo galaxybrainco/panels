@@ -1,7 +1,9 @@
 import hashlib
+import logging
 
 from django.conf import settings
 from django.core.exceptions import PermissionDenied, ValidationError
+from django.core.files.storage import default_storage
 from django.db import transaction
 from django.db.models import Max
 from PIL import Image, UnidentifiedImageError
@@ -10,7 +12,16 @@ from comics import permissions
 from comics.models import Page
 from media.models import Media, MediaStatus
 
+logger = logging.getLogger(__name__)
+
 DEFAULT_ALLOWED_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+FORMAT_TO_MIME = {
+    "JPEG": "image/jpeg",
+    "PNG": "image/png",
+    "WEBP": "image/webp",
+    "GIF": "image/gif",
+}
+FORMAT_TO_EXTENSION = {"JPEG": ".jpg", "PNG": ".png", "WEBP": ".webp", "GIF": ".gif"}
 
 
 def _validate_upload(uploaded_file):
@@ -24,15 +35,24 @@ def _validate_upload(uploaded_file):
         raise ValidationError({"file": "Unsupported image type."})
     try:
         with Image.open(uploaded_file) as image:
+            image_format = (image.format or "").upper()
             image.verify()
         uploaded_file.seek(0)
         with Image.open(uploaded_file) as image:
             width, height = image.size
-    except (UnidentifiedImageError, OSError, Image.DecompressionBombError) as exc:
+    except (
+        UnidentifiedImageError,
+        OSError,
+        SyntaxError,
+        ValueError,
+        Image.DecompressionBombError,
+    ) as exc:
         raise ValidationError({"file": "That file is not a valid image."}) from exc
     finally:
         uploaded_file.seek(0)
-    return width, height
+    if image_format not in FORMAT_TO_MIME:
+        raise ValidationError({"file": "Unsupported image type."})
+    return width, height, image_format
 
 
 def _sha256(uploaded_file):
@@ -47,7 +67,7 @@ def _sha256(uploaded_file):
 def add_media(user, page, uploaded_file, *, alt_text=""):
     if not permissions.can_author(user, page.series.comic):
         raise PermissionDenied("You cannot add media to this comic.")
-    width, height = _validate_upload(uploaded_file)
+    width, height, image_format = _validate_upload(uploaded_file)
     digest = _sha256(uploaded_file)
     locked_page = Page.objects.select_for_update().get(pk=page.pk)
     current = locked_page.media.aggregate(Max("position"))["position__max"]
@@ -55,15 +75,21 @@ def add_media(user, page, uploaded_file, *, alt_text=""):
         page=locked_page,
         position=(current or 0) + 1,
         alt_text=alt_text,
-        content_type=uploaded_file.content_type,
+        content_type=FORMAT_TO_MIME[image_format],
         width=width,
         height=height,
         bytes=uploaded_file.size,
         sha256=digest,
         status=MediaStatus.PENDING,
     )
-    media.original.save(uploaded_file.name, uploaded_file, save=False)
-    media.save()
+    media.original.save(
+        f"original{FORMAT_TO_EXTENSION[image_format]}", uploaded_file, save=False
+    )
+    try:
+        media.save()
+    except Exception:
+        media.original.delete(save=False)
+        raise
     from media.tasks import generate_derivatives
 
     generate_derivatives.enqueue(str(media.id))
@@ -74,7 +100,12 @@ def add_media(user, page, uploaded_file, *, alt_text=""):
 def remove_media(user, media):
     if not permissions.can_author(user, media.page.series.comic):
         raise PermissionDenied("You cannot remove media from this comic.")
-    for derivative in media.derivatives.all():
-        derivative.file.delete(save=False)
-    media.original.delete(save=False)
+    Page.objects.select_for_update().get(pk=media.page_id)
+    names = [media.original.name]
+    names += [derivative.file.name for derivative in media.derivatives.all()]
     media.delete()
+    for name in names:
+        try:
+            default_storage.delete(name)
+        except Exception:
+            logger.warning("Failed to delete media file %s", name)

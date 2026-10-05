@@ -13,7 +13,11 @@ from comics.services import create_comic, create_page, create_series
 from media.models import DerivativeKind, Media, MediaStatus
 from media.services import add_media, remove_media
 from media.tasks import generate_derivatives
-from tests.media_support import image_bytes, upload
+from tests.media_support import corrupted_png, image_bytes, spoofed_upload, upload
+
+
+def _boom(image, kind):
+    raise ValueError("boom")
 
 
 @pytest.fixture(autouse=True)
@@ -169,3 +173,56 @@ def test_remove_media_permissions(scene):
     media = add_media(owner, page, upload())
     with pytest.raises(PermissionDenied):
         remove_media(outsider, media)
+
+
+@pytest.mark.django_db
+def test_add_media_rejects_corrupted_image(scene):
+    owner, _, page = scene
+    with pytest.raises(ValidationError):
+        add_media(owner, page, corrupted_png())
+    assert Media.objects.count() == 0
+
+
+@pytest.mark.django_db
+def test_add_media_rejects_spoofed_image_bytes(scene):
+    owner, _, page = scene
+    with pytest.raises(ValidationError):
+        add_media(owner, page, spoofed_upload())
+    assert Media.objects.count() == 0
+
+
+@pytest.mark.django_db
+def test_add_media_records_detected_type_and_extension(scene):
+    owner, _, page = scene
+    fake = SimpleUploadedFile(
+        "photo.jpg", image_bytes(image_format="PNG"), content_type="image/jpeg"
+    )
+    media = add_media(owner, page, fake)
+    assert media.content_type == "image/png"
+    assert media.original.name.endswith(".png")
+
+
+@pytest.mark.django_db
+def test_generate_derivatives_marks_failed_on_unexpected_error(scene, monkeypatch):
+    owner, _, page = scene
+    media = add_media(owner, page, upload())
+    monkeypatch.setattr("media.tasks.render_derivative", _boom)
+    generate_derivatives.func(str(media.id))
+    media.refresh_from_db()
+    assert media.status == MediaStatus.FAILED
+
+
+@pytest.mark.django_db
+def test_generate_derivatives_preserves_existing_on_rerender_failure(
+    scene, monkeypatch
+):
+    owner, _, page = scene
+    media = add_media(owner, page, upload())
+    generate_derivatives.func(str(media.id))
+    names = list(media.derivatives.values_list("file", flat=True))
+    monkeypatch.setattr("media.tasks.render_derivative", _boom)
+    generate_derivatives.func(str(media.id))
+    media.refresh_from_db()
+    assert media.status == MediaStatus.FAILED
+    assert media.derivatives.count() == 3
+    assert all(default_storage.exists(name) for name in names)
