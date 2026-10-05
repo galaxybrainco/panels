@@ -17,6 +17,17 @@ def _require_owner(user, comic) -> None:
         raise PermissionDenied("You cannot manage this comic's collaborators.")
 
 
+def _lock_roles(comic):
+    roles = ComicRole.objects.select_for_update().filter(comic=comic).order_by("id")
+    return {membership.user_id: membership for membership in roles}
+
+
+def _require_locked_owner(roles, user) -> None:
+    membership = roles.get(getattr(user, "id", None))
+    if membership is None or membership.role != ComicRole.Role.OWNER:
+        raise PermissionDenied("You cannot manage this comic's collaborators.")
+
+
 def _validate_assignable(role):
     if role not in ASSIGNABLE_ROLES:
         raise ValidationError({"role": "Choose editor, contributor, or moderator."})
@@ -27,6 +38,8 @@ def _validate_assignable(role):
 def invite_user(owner, comic, email, role):
     _require_owner(owner, comic)
     _validate_assignable(role)
+    roles = _lock_roles(comic)
+    _require_locked_owner(roles, owner)
     normalized = (email or "").strip()
     if not normalized:
         raise ValidationError({"email": "An email address is required."})
@@ -34,7 +47,7 @@ def invite_user(owner, comic, email, role):
     if len(matches) != 1:
         raise ValidationError({"email": "No local account uses that email address."})
     user = matches[0]
-    if ComicRole.objects.filter(comic=comic, user=user).exists():
+    if user.id in roles:
         raise ValidationError({"email": "That user already has a role on this comic."})
     try:
         return ComicRole.objects.create(comic=comic, user=user, role=role)
@@ -48,12 +61,13 @@ def invite_user(owner, comic, email, role):
 def change_role(owner, comic, user, role):
     _require_owner(owner, comic)
     _validate_assignable(role)
-    try:
-        membership = ComicRole.objects.select_for_update().get(comic=comic, user=user)
-    except ComicRole.DoesNotExist as exc:
+    roles = _lock_roles(comic)
+    _require_locked_owner(roles, owner)
+    membership = roles.get(getattr(user, "id", None))
+    if membership is None:
         raise ValidationError(
             {"user": "That user is not a collaborator on this comic."}
-        ) from exc
+        )
     if membership.role == ComicRole.Role.OWNER:
         raise ValidationError(
             {"user": "Transfer ownership to change the owner's role."}
@@ -66,12 +80,13 @@ def change_role(owner, comic, user, role):
 @transaction.atomic
 def remove_collaborator(owner, comic, user):
     _require_owner(owner, comic)
-    try:
-        membership = ComicRole.objects.select_for_update().get(comic=comic, user=user)
-    except ComicRole.DoesNotExist as exc:
+    roles = _lock_roles(comic)
+    _require_locked_owner(roles, owner)
+    membership = roles.get(getattr(user, "id", None))
+    if membership is None:
         raise ValidationError(
             {"user": "That user is not a collaborator on this comic."}
-        ) from exc
+        )
     if membership.role == ComicRole.Role.OWNER:
         raise ValidationError({"user": "Transfer ownership before removing the owner."})
     membership.delete()
@@ -80,18 +95,18 @@ def remove_collaborator(owner, comic, user):
 @transaction.atomic
 def transfer_ownership(owner, comic, to_user):
     _require_owner(owner, comic)
+    roles = _lock_roles(comic)
+    _require_locked_owner(roles, owner)
+    if to_user is None or getattr(to_user, "id", None) is None:
+        raise ValidationError({"user": "Choose a collaborator to receive ownership."})
     if to_user == owner:
         raise ValidationError({"user": "You already own this comic."})
-    memberships = {
-        membership.user_id: membership
-        for membership in ComicRole.objects.select_for_update().filter(comic=comic)
-    }
-    target = memberships.get(to_user.id)
+    target = roles.get(to_user.id)
     if target is None:
         raise ValidationError(
             {"user": "Ownership can only be transferred to an existing collaborator."}
         )
-    current = memberships[owner.id]
+    current = roles[owner.id]
     current.role = ComicRole.Role.EDITOR
     current.save(update_fields=["role"])
     target.role = ComicRole.Role.OWNER

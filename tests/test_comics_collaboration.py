@@ -202,3 +202,40 @@ def test_management_rights_follow_transfer(scene):
     invite_user(editor, comic, "newcomer@example.com", ComicRole.Role.CONTRIBUTOR)
     with pytest.raises(PermissionDenied):
         invite_user(owner, comic, "newcomer@example.com", ComicRole.Role.MODERATOR)
+
+
+@pytest.mark.django_db
+def test_transfer_rejects_none_target(scene):
+    owner, comic = scene
+    with pytest.raises(ValidationError):
+        transfer_ownership(owner, comic, None)
+
+
+@pytest.mark.django_db
+def test_transfer_rechecks_ownership_under_lock(scene, monkeypatch):
+    owner, comic = scene
+    editor = _user("editor@example.com")
+    ComicRole.objects.create(comic=comic, user=editor, role=ComicRole.Role.EDITOR)
+    monkeypatch.setattr(
+        "comics.collaboration.permissions.can_manage_collaborators",
+        lambda user, comic: True,
+    )
+    with pytest.raises(PermissionDenied):
+        transfer_ownership(editor, comic, owner)
+
+
+@pytest.mark.django_db
+def test_change_role_rechecks_ownership_under_lock(scene, monkeypatch):
+    owner, comic = scene
+    editor = _user("editor@example.com")
+    contributor = _user("contributor@example.com")
+    ComicRole.objects.create(comic=comic, user=editor, role=ComicRole.Role.EDITOR)
+    ComicRole.objects.create(
+        comic=comic, user=contributor, role=ComicRole.Role.CONTRIBUTOR
+    )
+    monkeypatch.setattr(
+        "comics.collaboration.permissions.can_manage_collaborators",
+        lambda user, comic: True,
+    )
+    with pytest.raises(PermissionDenied):
+        change_role(editor, comic, contributor, ComicRole.Role.MODERATOR)
