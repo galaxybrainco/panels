@@ -177,7 +177,9 @@ def update_page(user, page, **fields):
     locked.save()
     if locked.status == PageStatus.PUBLISHED:
         plan = federation.federation_plan(locked)
-        if plan.emit:
+        if plan.emit and not was_plan.emit:
+            federation.emit_page_activity(locked, "Create")
+        elif plan.emit:
             federation.emit_page_activity(locked, "Update")
         elif was_plan.emit:
             federation.emit_page_activity(locked, "Delete", plan=was_plan)

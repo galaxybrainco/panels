@@ -116,7 +116,7 @@ def test_note_attachment_uses_federation_derivative():
     page = _published(page)
     attachment = page_to_note(page)["attachment"][0]
     assert attachment["type"] == "Document"
-    assert attachment["mediaType"] == "image/png"
+    assert attachment["mediaType"] == "image/jpeg"
     assert attachment["url"].startswith("https://cdn.test/")
     assert "format=jpeg" in attachment["url"]
 
@@ -245,3 +245,27 @@ def test_note_endpoint_404_for_members_page(client):
     owner, _, _, page = _scene(audience=Audience.MEMBERS)
     publish_page(owner, page)
     assert client.get(f"/pages/{page.id}").status_code == 404
+
+
+@pytest.mark.django_db
+def test_note_endpoint_404_for_local_only_page(client):
+    owner, _, _, page = _scene(federation=FederationMode.LOCAL_ONLY)
+    publish_page(owner, page)
+    assert client.get(f"/pages/{page.id}").status_code == 404
+
+
+@pytest.mark.django_db
+def test_page_to_note_refuses_non_federatable_page():
+    _, _, _, page = _scene(audience=Audience.MEMBERS)
+    with pytest.raises(ValueError):
+        page_to_note(page)
+
+
+@pytest.mark.django_db
+def test_update_page_from_members_to_public_emits_create():
+    owner, _, _, page = _scene(audience=Audience.MEMBERS)
+    published = publish_page(owner, page)
+    assert Activity.objects.filter(type="Create").count() == 0
+    update_page(owner, published, audience=Audience.PUBLIC)
+    assert Activity.objects.filter(type="Create").count() == 1
+    assert Activity.objects.filter(type="Update").count() == 0

@@ -20,9 +20,12 @@ class _StubOriginal:
 
 
 class _StubMedia:
-    def __init__(self, *, width=1000, height=800, name=None, url=None):
+    def __init__(
+        self, *, width=1000, height=800, name=None, url=None, content_type="image/png"
+    ):
         self.width = width
         self.height = height
+        self.content_type = content_type
         self.original = _StubOriginal(
             name=name or "media/abc/original.png",
             url=url or "media/abc/original.png",
@@ -100,4 +103,20 @@ def test_default_backend_is_local(media):
     assert isinstance(get_derivative_backend(), LocalDerivativeBackend)
     assert derivative_url(media, DerivativeKind.THUMBNAIL).startswith(
         "http://testserver/"
+    )
+
+
+def test_local_backend_content_type_is_the_original(media):
+    assert (
+        LocalDerivativeBackend().content_type(media, DerivativeKind.FEDERATION)
+        == "image/png"
+    )
+
+
+def test_bunny_backend_content_type_is_the_derivative_format(media):
+    assert (
+        BunnyOptimizerBackend("https://cdn.test").content_type(
+            media, DerivativeKind.FEDERATION
+        )
+        == "image/jpeg"
     )

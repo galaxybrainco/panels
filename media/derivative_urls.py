@@ -32,12 +32,18 @@ class DerivativeBackend:
     def url(self, media, kind) -> str:  # pragma: no cover - interface
         raise NotImplementedError
 
+    def content_type(self, media, kind) -> str:  # pragma: no cover - interface
+        raise NotImplementedError
+
 
 class LocalDerivativeBackend(DerivativeBackend):
     """Development/self-host backend: serve the original, no transforms."""
 
     def url(self, media, kind) -> str:
         return _absolute_media_url(media)
+
+    def content_type(self, media, kind) -> str:
+        return media.content_type
 
 
 class BunnyOptimizerBackend(DerivativeBackend):
@@ -61,6 +67,9 @@ class BunnyOptimizerBackend(DerivativeBackend):
                 params["height"] = cap
         query = urlencode(params)
         return f"{self.base_url}/{media.original.name.lstrip('/')}?{query}"
+
+    def content_type(self, media, kind) -> str:
+        return f"image/{DERIVATIVE_SPECS[kind]['format']}"
 
 
 def get_derivative_backend() -> DerivativeBackend:

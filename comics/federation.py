@@ -12,7 +12,7 @@ from federation.activitypub import (
     build_activity,
 )
 from federation.models import Activity, ActivityDirection, ActivityStatus
-from media.derivative_urls import DerivativeKind, derivative_url
+from media.derivative_urls import DerivativeKind, get_derivative_backend
 
 
 @dataclass(frozen=True)
@@ -51,20 +51,19 @@ def _note_content(page, url) -> str:
 
 
 def _attachment(media) -> dict:
-    attachment = {
+    backend = get_derivative_backend()
+    return {
         "type": "Document",
-        "mediaType": media.content_type,
-        "url": derivative_url(media, DerivativeKind.FEDERATION),
+        "mediaType": backend.content_type(media, DerivativeKind.FEDERATION),
+        "url": backend.url(media, DerivativeKind.FEDERATION),
         "name": media.alt_text,
     }
-    if media.width and media.height:
-        attachment["width"] = media.width
-        attachment["height"] = media.height
-    return attachment
 
 
 def page_to_note(page, plan=None) -> dict:
     plan = plan or federation_plan(page)
+    if not plan.emit:
+        raise ValueError("Page is not federatable.")
     note_id = _note_id(page)
     note = {
         "@context": activity_context(),
