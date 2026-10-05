@@ -15,4 +15,5 @@ urlpatterns = [
     path("healthz", healthz, name="healthz"),
     path("", include("federation.urls")),
     path("", include("actors.urls")),
+    path("", include("comics.urls")),
 ]

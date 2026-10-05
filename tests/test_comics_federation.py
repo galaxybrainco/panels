@@ -221,3 +221,27 @@ def test_update_page_rejects_unknown_fields():
     owner, _, _, page = _scene()
     with pytest.raises(TypeError):
         update_page(owner, page, position=99)
+
+
+@pytest.mark.django_db
+def test_note_endpoint_serves_published_page(client):
+    owner, _, _, page = _scene()
+    publish_page(owner, page)
+    response = client.get(f"/pages/{page.id}")
+    assert response.status_code == 200
+    assert response["Content-Type"].startswith("application/activity+json")
+    assert response.json()["type"] == "Note"
+
+
+@pytest.mark.django_db
+def test_note_endpoint_404_for_draft(client):
+    _, _, _, page = _scene()
+    response = client.get(f"/pages/{page.id}")
+    assert response.status_code == 404
+
+
+@pytest.mark.django_db
+def test_note_endpoint_404_for_members_page(client):
+    owner, _, _, page = _scene(audience=Audience.MEMBERS)
+    publish_page(owner, page)
+    assert client.get(f"/pages/{page.id}").status_code == 404
