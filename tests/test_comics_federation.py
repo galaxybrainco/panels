@@ -9,7 +9,9 @@ from comics.federation import (
     page_to_note,
 )
 from comics.models import FederationMode
+from comics.publishing import publish_page, unpublish_page
 from comics.services import create_comic, create_page, create_series
+from federation import collections
 from federation.activitypub import PUBLIC, Audience
 from federation.models import Activity, ActivityDirection, ActivityStatus
 from tests.media_support import make_media
@@ -139,3 +141,36 @@ def test_emit_delete_uses_object_id():
     page = _published(page)
     activity = emit_page_activity(page, "Delete")
     assert activity.payload["object"] == page.ap_id
+
+
+@pytest.mark.django_db
+def test_publish_emits_create_and_outbox_lists_it():
+    owner, comic, _, page = _scene()
+    publish_page(owner, page)
+    activity = Activity.objects.get(type="Create")
+    assert activity.actor == comic.actor
+    outbox = collections.actor_outbox(comic.actor, page=1)
+    assert any(item["type"] == "Create" for item in outbox["orderedItems"])
+
+
+@pytest.mark.django_db
+def test_publish_is_idempotent_for_activity():
+    owner, _, _, page = _scene()
+    publish_page(owner, page)
+    publish_page(owner, page)
+    assert Activity.objects.filter(type="Create").count() == 1
+
+
+@pytest.mark.django_db
+def test_publish_members_does_not_emit():
+    owner, _, _, page = _scene(audience=Audience.MEMBERS)
+    publish_page(owner, page)
+    assert not Activity.objects.filter(direction=ActivityDirection.OUTBOUND).exists()
+
+
+@pytest.mark.django_db
+def test_unpublish_emits_delete():
+    owner, _, _, page = _scene()
+    publish_page(owner, page)
+    unpublish_page(owner, page)
+    assert Activity.objects.filter(type="Delete").count() == 1
