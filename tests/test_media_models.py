@@ -3,8 +3,8 @@ from django.contrib.auth import get_user_model
 from django.db import IntegrityError, transaction
 
 from comics.services import create_comic, create_page, create_series
-from media.models import DerivativeKind, Media, MediaDerivative, MediaStatus
-from tests.media_support import make_ready_media
+from media.models import Media
+from tests.media_support import make_media
 
 
 @pytest.fixture
@@ -29,14 +29,13 @@ def test_media_defaults(page):
         bytes=123,
         sha256="a" * 64,
     )
-    assert media.status == MediaStatus.PENDING
     assert media.alt_text == ""
     assert media.page == page
 
 
 @pytest.mark.django_db
 def test_media_position_is_unique_per_page(page):
-    make_ready_media(page, position=1)
+    make_media(page, position=1)
     with pytest.raises(IntegrityError), transaction.atomic():
         Media.objects.create(
             page=page,
@@ -52,30 +51,6 @@ def test_media_position_is_unique_per_page(page):
 
 @pytest.mark.django_db
 def test_media_orders_by_position(page):
-    make_ready_media(page, position=2)
-    make_ready_media(page, position=1)
+    make_media(page, position=2)
+    make_media(page, position=1)
     assert [item.position for item in page.media.all()] == [1, 2]
-
-
-@pytest.mark.django_db
-def test_derivative_kind_is_unique_and_cascades(page):
-    media = make_ready_media(page, position=1)
-    MediaDerivative.objects.create(
-        media=media,
-        kind=DerivativeKind.THUMBNAIL,
-        file="media/x/thumbnail.webp",
-        width=10,
-        height=20,
-        bytes=50,
-    )
-    with pytest.raises(IntegrityError), transaction.atomic():
-        MediaDerivative.objects.create(
-            media=media,
-            kind=DerivativeKind.THUMBNAIL,
-            file="media/x/thumbnail2.webp",
-            width=10,
-            height=20,
-            bytes=50,
-        )
-    media.delete()
-    assert MediaDerivative.objects.count() == 0

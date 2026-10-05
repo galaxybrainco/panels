@@ -12,8 +12,6 @@ def _object_id(page) -> str:
 
 
 def _enforce_publish_gates(page) -> None:
-    from media.models import MediaStatus
-
     media = list(page.media.all())
     if not media:
         raise ValidationError({"media": "Add at least one image before publishing."})
@@ -21,8 +19,6 @@ def _enforce_publish_gates(page) -> None:
         raise ValidationError(
             {"media": "Every image needs alt text before publishing."}
         )
-    if any(item.status != MediaStatus.READY for item in media):
-        raise ValidationError({"media": "Images are still processing."})
     if page.sensitive and not page.content_warning.strip():
         raise ValidationError(
             {"content_warning": "A content warning is required for sensitive pages."}

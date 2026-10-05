@@ -3,21 +3,14 @@ import hashlib
 import pytest
 from django.contrib.auth import get_user_model
 from django.core.exceptions import PermissionDenied, ValidationError
-from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django_tasks_db.models import DBTaskResult
 
 from comics.models import ComicRole
 from comics.services import create_comic, create_page, create_series
-from media.models import DerivativeKind, Media, MediaStatus
+from media.models import Media
 from media.services import add_media, remove_media
-from media.tasks import generate_derivatives
 from tests.media_support import corrupted_png, image_bytes, spoofed_upload, upload
-
-
-def _boom(image, kind):
-    raise ValueError("boom")
 
 
 @pytest.fixture(autouse=True)
@@ -37,18 +30,16 @@ def scene():
 
 
 @pytest.mark.django_db
-def test_add_media_stores_original_metadata_and_enqueues(scene):
+def test_add_media_stores_original_metadata(scene):
     owner, _, page = scene
     data = image_bytes()
     media = add_media(owner, page, upload(), alt_text="A panel")
-    assert media.status == MediaStatus.PENDING
     assert media.position == 1
     assert (media.width, media.height) == (40, 60)
     assert media.bytes == len(data)
     assert media.sha256 == hashlib.sha256(data).hexdigest()
     assert media.alt_text == "A panel"
     assert default_storage.exists(media.original.name)
-    assert DBTaskResult.objects.count() == 1
 
 
 @pytest.mark.django_db
@@ -106,62 +97,13 @@ def test_add_media_permissions(scene):
 
 
 @pytest.mark.django_db
-def test_generate_derivatives_creates_variants_and_marks_ready(scene):
+def test_remove_media_deletes_file_and_row(scene):
     owner, _, page = scene
     media = add_media(owner, page, upload())
-    generate_derivatives.func(str(media.id))
-    media.refresh_from_db()
-    assert media.status == MediaStatus.READY
-    kinds = set(media.derivatives.values_list("kind", flat=True))
-    assert kinds == {
-        DerivativeKind.THUMBNAIL,
-        DerivativeKind.DISPLAY,
-        DerivativeKind.FEDERATION,
-    }
-    for derivative in media.derivatives.all():
-        assert default_storage.exists(derivative.file.name)
-
-
-@pytest.mark.django_db
-def test_generate_derivatives_is_idempotent(scene):
-    owner, _, page = scene
-    media = add_media(owner, page, upload())
-    generate_derivatives.func(str(media.id))
-    generate_derivatives.func(str(media.id))
-    assert media.derivatives.count() == 3
-
-
-@pytest.mark.django_db
-def test_generate_derivatives_marks_failed_on_bad_original(scene):
-    owner, _, page = scene
-    media = Media.objects.create(
-        page=page,
-        position=1,
-        alt_text="x",
-        original=ContentFile(b"not an image", name="bad.png"),
-        content_type="image/png",
-        width=1,
-        height=1,
-        bytes=12,
-        sha256="0" * 64,
-    )
-    generate_derivatives.func(str(media.id))
-    media.refresh_from_db()
-    assert media.status == MediaStatus.FAILED
-    assert media.derivatives.count() == 0
-
-
-@pytest.mark.django_db
-def test_remove_media_deletes_files_and_row(scene):
-    owner, _, page = scene
-    media = add_media(owner, page, upload())
-    generate_derivatives.func(str(media.id))
     original_name = media.original.name
-    derivative_names = list(media.derivatives.values_list("file", flat=True))
     remove_media(owner, media)
     assert not Media.objects.filter(pk=media.pk).exists()
     assert not default_storage.exists(original_name)
-    assert not any(default_storage.exists(name) for name in derivative_names)
 
 
 @pytest.mark.django_db
@@ -200,29 +142,3 @@ def test_add_media_records_detected_type_and_extension(scene):
     media = add_media(owner, page, fake)
     assert media.content_type == "image/png"
     assert media.original.name.endswith(".png")
-
-
-@pytest.mark.django_db
-def test_generate_derivatives_marks_failed_on_unexpected_error(scene, monkeypatch):
-    owner, _, page = scene
-    media = add_media(owner, page, upload())
-    monkeypatch.setattr("media.tasks.render_derivative", _boom)
-    generate_derivatives.func(str(media.id))
-    media.refresh_from_db()
-    assert media.status == MediaStatus.FAILED
-
-
-@pytest.mark.django_db
-def test_generate_derivatives_preserves_existing_on_rerender_failure(
-    scene, monkeypatch
-):
-    owner, _, page = scene
-    media = add_media(owner, page, upload())
-    generate_derivatives.func(str(media.id))
-    names = list(media.derivatives.values_list("file", flat=True))
-    monkeypatch.setattr("media.tasks.render_derivative", _boom)
-    generate_derivatives.func(str(media.id))
-    media.refresh_from_db()
-    assert media.status == MediaStatus.FAILED
-    assert media.derivatives.count() == 3
-    assert all(default_storage.exists(name) for name in names)

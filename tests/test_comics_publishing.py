@@ -5,8 +5,7 @@ from django.core.exceptions import PermissionDenied, ValidationError
 from comics.models import ComicRole, PageStatus
 from comics.publishing import publish_page, unpublish_page
 from comics.services import create_comic, create_page, create_series
-from media.models import MediaStatus
-from tests.media_support import make_ready_media
+from tests.media_support import make_media
 
 
 def _user(email="owner@example.com"):
@@ -17,7 +16,7 @@ def _page(owner, **page_fields):
     comic = create_comic(owner, "lunarbaboon", "Lunar Baboon")
     series = create_series(owner, comic, "Main Story")
     page = create_page(owner, series, **page_fields)
-    make_ready_media(page, position=1, alt_text="A panel")
+    make_media(page, position=1, alt_text="A panel")
     return comic, series, page
 
 
@@ -85,16 +84,6 @@ def test_publish_requires_alt_text_on_every_image():
     owner = _user()
     _, _, page = _page(owner)
     page.media.update(alt_text="")
-    with pytest.raises(ValidationError) as exc:
-        publish_page(owner, page)
-    assert "media" in exc.value.message_dict
-
-
-@pytest.mark.django_db
-def test_publish_requires_images_to_be_ready():
-    owner = _user()
-    _, _, page = _page(owner)
-    page.media.update(status=MediaStatus.PENDING)
     with pytest.raises(ValidationError) as exc:
         publish_page(owner, page)
     assert "media" in exc.value.message_dict

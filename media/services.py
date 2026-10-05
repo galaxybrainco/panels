@@ -10,7 +10,7 @@ from PIL import Image, UnidentifiedImageError
 
 from comics import permissions
 from comics.models import Page
-from media.models import Media, MediaStatus
+from media.models import Media
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +80,6 @@ def add_media(user, page, uploaded_file, *, alt_text=""):
         height=height,
         bytes=uploaded_file.size,
         sha256=digest,
-        status=MediaStatus.PENDING,
     )
     media.original.save(
         f"original{FORMAT_TO_EXTENSION[image_format]}", uploaded_file, save=False
@@ -90,9 +89,6 @@ def add_media(user, page, uploaded_file, *, alt_text=""):
     except Exception:
         media.original.delete(save=False)
         raise
-    from media.tasks import generate_derivatives
-
-    generate_derivatives.enqueue(str(media.id))
     return media
 
 
@@ -102,7 +98,6 @@ def remove_media(user, media):
         raise PermissionDenied("You cannot remove media from this comic.")
     Page.objects.select_for_update().get(pk=media.page_id)
     names = [media.original.name]
-    names += [derivative.file.name for derivative in media.derivatives.all()]
     media.delete()
     for name in names:
         try:

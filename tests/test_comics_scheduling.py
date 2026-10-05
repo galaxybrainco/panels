@@ -10,7 +10,7 @@ from comics.models import ComicRole, Page, PageStatus
 from comics.publishing import publish, publish_page, schedule_page, unschedule_page
 from comics.services import create_comic, create_page, create_series
 from comics.tasks import publish_scheduled_page
-from tests.media_support import make_ready_media
+from tests.media_support import make_media
 
 
 def _user(email="owner@example.com"):
@@ -21,7 +21,7 @@ def _page(owner):
     comic = create_comic(owner, "lunarbaboon", "Lunar Baboon")
     series = create_series(owner, comic, "Main Story")
     page = create_page(owner, series)
-    make_ready_media(page, position=1, alt_text="A panel")
+    make_media(page, position=1, alt_text="A panel")
     return comic, page
 
 

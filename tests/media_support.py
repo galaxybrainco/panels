@@ -20,8 +20,8 @@ def upload(
     return SimpleUploadedFile(name, data, content_type=content_type)
 
 
-def make_ready_media(page, *, position=1, alt_text="A panel"):
-    from media.models import Media, MediaStatus
+def make_media(page, *, position=1, alt_text="A panel"):
+    from media.models import Media
 
     data = image_bytes()
     return Media.objects.create(
@@ -34,7 +34,6 @@ def make_ready_media(page, *, position=1, alt_text="A panel"):
         height=60,
         bytes=len(data),
         sha256=hashlib.sha256(data).hexdigest(),
-        status=MediaStatus.READY,
     )
 
 

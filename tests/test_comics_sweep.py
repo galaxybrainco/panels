@@ -8,7 +8,7 @@ from django.utils import timezone
 from comics.models import Page, PageStatus
 from comics.publishing import schedule_page
 from comics.services import create_comic, create_page, create_series
-from tests.media_support import make_ready_media
+from tests.media_support import make_media
 
 
 def _user(email="owner@example.com"):
@@ -18,7 +18,7 @@ def _user(email="owner@example.com"):
 def _due_page(owner, series, *, with_media=True):
     page = create_page(owner, series)
     if with_media:
-        make_ready_media(page, position=1, alt_text="A panel")
+        make_media(page, position=1, alt_text="A panel")
     page.status = PageStatus.SCHEDULED
     page.scheduled_for = timezone.now() - timedelta(minutes=5)
     page.scheduled_by = owner
@@ -33,7 +33,7 @@ def test_sweep_publishes_only_due_pages():
     series = create_series(owner, comic, "Main Story")
     due = _due_page(owner, series)
     future = create_page(owner, series)
-    make_ready_media(future, position=1, alt_text="Another panel")
+    make_media(future, position=1, alt_text="Another panel")
     schedule_page(owner, future, timezone.now() + timedelta(hours=1))
 
     call_command("publish_due_pages")
