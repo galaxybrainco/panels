@@ -75,3 +75,25 @@ def remove_collaborator(owner, comic, user):
     if membership.role == ComicRole.Role.OWNER:
         raise ValidationError({"user": "Transfer ownership before removing the owner."})
     membership.delete()
+
+
+@transaction.atomic
+def transfer_ownership(owner, comic, to_user):
+    _require_owner(owner, comic)
+    if to_user == owner:
+        raise ValidationError({"user": "You already own this comic."})
+    memberships = {
+        membership.user_id: membership
+        for membership in ComicRole.objects.select_for_update().filter(comic=comic)
+    }
+    target = memberships.get(to_user.id)
+    if target is None:
+        raise ValidationError(
+            {"user": "Ownership can only be transferred to an existing collaborator."}
+        )
+    current = memberships[owner.id]
+    current.role = ComicRole.Role.EDITOR
+    current.save(update_fields=["role"])
+    target.role = ComicRole.Role.OWNER
+    target.save(update_fields=["role"])
+    return target

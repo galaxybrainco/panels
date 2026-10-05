@@ -2,7 +2,12 @@ import pytest
 from django.contrib.auth import get_user_model
 from django.core.exceptions import PermissionDenied, ValidationError
 
-from comics.collaboration import change_role, invite_user, remove_collaborator
+from comics.collaboration import (
+    change_role,
+    invite_user,
+    remove_collaborator,
+    transfer_ownership,
+)
 from comics.models import ComicRole
 from comics.permissions import can_manage_collaborators
 from comics.services import create_comic
@@ -148,3 +153,52 @@ def test_non_owner_cannot_change_or_remove(scene):
         change_role(editor, comic, contributor, ComicRole.Role.MODERATOR)
     with pytest.raises(PermissionDenied):
         remove_collaborator(editor, comic, contributor)
+
+
+@pytest.mark.django_db
+def test_transfer_ownership_demotes_old_owner_and_promotes_target(scene):
+    owner, comic = scene
+    editor = _user("editor@example.com")
+    invite_user(owner, comic, "editor@example.com", ComicRole.Role.EDITOR)
+    membership = transfer_ownership(owner, comic, editor)
+    assert membership.role == ComicRole.Role.OWNER
+    assert ComicRole.objects.get(comic=comic, user=owner).role == ComicRole.Role.EDITOR
+    assert ComicRole.objects.filter(comic=comic, role=ComicRole.Role.OWNER).count() == 1
+
+
+@pytest.mark.django_db
+def test_transfer_requires_existing_collaborator(scene):
+    owner, comic = scene
+    stranger = _user("stranger@example.com")
+    with pytest.raises(ValidationError):
+        transfer_ownership(owner, comic, stranger)
+
+
+@pytest.mark.django_db
+def test_transfer_to_self_is_rejected(scene):
+    owner, comic = scene
+    with pytest.raises(ValidationError):
+        transfer_ownership(owner, comic, owner)
+
+
+@pytest.mark.django_db
+def test_non_owner_cannot_transfer(scene):
+    owner, comic = scene
+    editor = _user("editor@example.com")
+    ComicRole.objects.create(comic=comic, user=editor, role=ComicRole.Role.EDITOR)
+    with pytest.raises(PermissionDenied):
+        transfer_ownership(editor, comic, owner)
+
+
+@pytest.mark.django_db
+def test_management_rights_follow_transfer(scene):
+    owner, comic = scene
+    editor = _user("editor@example.com")
+    invite_user(owner, comic, "editor@example.com", ComicRole.Role.EDITOR)
+    transfer_ownership(owner, comic, editor)
+    _user("newcomer@example.com")
+    assert can_manage_collaborators(editor, comic) is True
+    assert can_manage_collaborators(owner, comic) is False
+    invite_user(editor, comic, "newcomer@example.com", ComicRole.Role.CONTRIBUTOR)
+    with pytest.raises(PermissionDenied):
+        invite_user(owner, comic, "newcomer@example.com", ComicRole.Role.MODERATOR)
