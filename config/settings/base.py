@@ -134,6 +134,11 @@ MEDIA_URL = "media/"
 MEDIA_ROOT = BASE_DIR / "uploads"
 MEDIA_MAX_UPLOAD_BYTES = env.int("MEDIA_MAX_UPLOAD_BYTES", default=25_000_000)
 MEDIA_ALLOWED_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+MEDIA_DERIVATIVE_BACKEND = env(
+    "MEDIA_DERIVATIVE_BACKEND",
+    default="media.derivative_urls.LocalDerivativeBackend",
+)
+MEDIA_CDN_BASE_URL = env("MEDIA_CDN_BASE_URL", default="")
 
 STORAGES = {
     "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
