@@ -3,9 +3,13 @@ from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 
+from actors.models import Actor, ActorType
 from actors.services import create_local_actor
 from comics.services import create_comic, create_page, create_series
-from social.models import Like
+from federation import handlers
+from federation.activitypub import Audience
+from federation.models import Activity, ActivityDirection
+from social.models import Boost, Follow, FollowStatus, Like
 from social.reactions import (
     boost,
     boost_count,
@@ -87,3 +91,152 @@ def test_like_unique_constraint():
     Like.objects.create(actor=actor, object_id=page.ap_id, page=page)
     with pytest.raises(IntegrityError), transaction.atomic():
         Like.objects.create(actor=actor, object_id=page.ap_id, page=page)
+
+
+def remote(handle="bob"):
+    domain = f"{handle}.test"
+    return Actor.objects.create(
+        ap_id=f"https://{domain}/actors/{handle}",
+        type=ActorType.PERSON,
+        handle=handle,
+        domain=domain,
+        inbox=f"https://{domain}/actors/{handle}/inbox",
+    )
+
+
+def _inbound(activity_type, actor, payload):
+    return Activity.objects.create(
+        ap_id=payload["id"],
+        type=activity_type,
+        actor=actor,
+        direction=ActivityDirection.INBOUND,
+        payload=payload,
+    )
+
+
+@pytest.mark.django_db
+def test_inbound_like_stores_for_published_federatable_page():
+    page, bob = published_page(), remote("bob")
+    payload = {
+        "id": "https://bob.test/activities/1",
+        "type": "Like",
+        "actor": bob.ap_id,
+        "object": page.ap_id,
+    }
+    handlers.dispatch(_inbound("Like", bob, payload))
+    assert Like.objects.get(actor=bob).page == page
+
+
+@pytest.mark.django_db
+def test_inbound_like_is_idempotent():
+    page, bob = published_page(), remote("bob")
+    first = {
+        "id": "https://bob.test/activities/1",
+        "type": "Like",
+        "actor": bob.ap_id,
+        "object": page.ap_id,
+    }
+    handlers.dispatch(_inbound("Like", bob, first))
+    handlers.dispatch(_inbound("Like", bob, {**first, "id": "https://bob.test/a/2"}))
+    assert Like.objects.count() == 1
+
+
+@pytest.mark.django_db
+def test_inbound_like_ignored_for_members_page():
+    page, bob = published_page(audience=Audience.MEMBERS), remote("bob")
+    payload = {
+        "id": "https://bob.test/activities/1",
+        "type": "Like",
+        "actor": bob.ap_id,
+        "object": page.ap_id,
+    }
+    handlers.dispatch(_inbound("Like", bob, payload))
+    assert not Like.objects.exists()
+
+
+@pytest.mark.django_db
+def test_inbound_like_ignored_for_unknown_object():
+    bob = remote("bob")
+    payload = {
+        "id": "https://bob.test/activities/1",
+        "type": "Like",
+        "actor": bob.ap_id,
+        "object": "https://elsewhere.test/pages/nope",
+    }
+    handlers.dispatch(_inbound("Like", bob, payload))
+    assert not Like.objects.exists()
+
+
+@pytest.mark.django_db
+def test_inbound_announce_stores_boost():
+    page, bob = published_page(), remote("bob")
+    payload = {
+        "id": "https://bob.test/activities/1",
+        "type": "Announce",
+        "actor": bob.ap_id,
+        "object": page.ap_id,
+    }
+    handlers.dispatch(_inbound("Announce", bob, payload))
+    assert Boost.objects.get(actor=bob).page == page
+
+
+@pytest.mark.django_db
+def test_inbound_undo_like_removes_row_dict_form():
+    page, bob = published_page(), remote("bob")
+    Like.objects.create(
+        actor=bob, object_id=page.ap_id, page=page, activity_id="https://bob.test/a/1"
+    )
+    payload = {
+        "id": "https://bob.test/activities/2",
+        "type": "Undo",
+        "actor": bob.ap_id,
+        "object": {"type": "Like", "actor": bob.ap_id, "object": page.ap_id},
+    }
+    handlers.dispatch(_inbound("Undo", bob, payload))
+    assert not Like.objects.exists()
+
+
+@pytest.mark.django_db
+def test_inbound_undo_like_removes_row_string_form():
+    page, bob = published_page(), remote("bob")
+    Like.objects.create(
+        actor=bob, object_id=page.ap_id, page=page, activity_id="https://bob.test/a/1"
+    )
+    payload = {
+        "id": "https://bob.test/activities/2",
+        "type": "Undo",
+        "actor": bob.ap_id,
+        "object": "https://bob.test/a/1",
+    }
+    handlers.dispatch(_inbound("Undo", bob, payload))
+    assert not Like.objects.exists()
+
+
+@pytest.mark.django_db
+def test_inbound_undo_announce_removes_boost():
+    page, bob = published_page(), remote("bob")
+    Boost.objects.create(
+        actor=bob, object_id=page.ap_id, page=page, activity_id="https://bob.test/a/1"
+    )
+    payload = {
+        "id": "https://bob.test/activities/2",
+        "type": "Undo",
+        "actor": bob.ap_id,
+        "object": {"type": "Announce", "actor": bob.ap_id, "object": page.ap_id},
+    }
+    handlers.dispatch(_inbound("Undo", bob, payload))
+    assert not Boost.objects.exists()
+
+
+@pytest.mark.django_db
+def test_undo_follow_still_removed():
+    comic, bob = create_local_actor("comic"), remote("bob")
+    Follow.objects.create(follower=bob, target=comic, status=FollowStatus.ACCEPTED)
+    payload = {
+        "id": "https://bob.test/activities/2",
+        "type": "Undo",
+        "actor": bob.ap_id,
+        "object": {"type": "Follow", "actor": bob.ap_id, "object": comic.ap_id},
+    }
+    handlers.dispatch(_inbound("Undo", bob, payload))
+    assert not Follow.objects.exists()

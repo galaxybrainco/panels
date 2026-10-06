@@ -1,7 +1,16 @@
 from actors.models import Actor
+from comics.federation import federation_plan
+from comics.models import Page, PageStatus
 from federation import handlers
 from social import services
-from social.models import Follow, FollowStatus
+from social.models import Boost, Follow, FollowStatus, Like
+
+
+def _federatable_page(object_id):
+    page = Page.objects.filter(ap_id=object_id, status=PageStatus.PUBLISHED).first()
+    if page is None or not federation_plan(page).emit:
+        return None
+    return page
 
 
 @handlers.register("Follow")
@@ -27,13 +36,49 @@ def handle_follow(activity):
 def handle_undo(activity):
     obj = activity.payload.get("object")
     if isinstance(obj, dict):
-        if obj.get("type") != "Follow":
-            return
-        Follow.objects.filter(
-            follower=activity.actor, target__ap_id=obj.get("object")
-        ).delete()
+        obj_type = obj.get("type")
+        if obj_type == "Follow":
+            Follow.objects.filter(
+                follower=activity.actor, target__ap_id=obj.get("object")
+            ).delete()
+        elif obj_type == "Like":
+            Like.objects.filter(
+                actor=activity.actor, object_id=obj.get("object")
+            ).delete()
+        elif obj_type == "Announce":
+            Boost.objects.filter(
+                actor=activity.actor, object_id=obj.get("object")
+            ).delete()
     elif isinstance(obj, str):
         Follow.objects.filter(follower=activity.actor, activity_id=obj).delete()
+        Like.objects.filter(actor=activity.actor, activity_id=obj).delete()
+        Boost.objects.filter(actor=activity.actor, activity_id=obj).delete()
+
+
+@handlers.register("Like")
+def handle_like(activity):
+    object_id = activity.payload.get("object")
+    page = _federatable_page(object_id)
+    if page is None:
+        return
+    Like.objects.get_or_create(
+        actor=activity.actor,
+        object_id=object_id,
+        defaults={"page": page, "activity_id": activity.ap_id},
+    )
+
+
+@handlers.register("Announce")
+def handle_announce(activity):
+    object_id = activity.payload.get("object")
+    page = _federatable_page(object_id)
+    if page is None:
+        return
+    Boost.objects.get_or_create(
+        actor=activity.actor,
+        object_id=object_id,
+        defaults={"page": page, "activity_id": activity.ap_id},
+    )
 
 
 @handlers.register("Accept")
