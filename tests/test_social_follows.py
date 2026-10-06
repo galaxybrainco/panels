@@ -3,7 +3,8 @@ from django.db import IntegrityError, transaction
 
 from actors.models import Actor, ActorType
 from actors.services import create_local_actor
-from federation import handlers
+from comics.federation import emit_page_activity
+from federation import collections, handlers
 from federation.models import Activity, ActivityDirection, Delivery
 from social.models import Follow, FollowStatus
 from social.services import accept_follow, follow, follower_inboxes, unfollow
@@ -210,3 +211,40 @@ def test_inbound_accept_accepts_our_pending_follow():
     assert (
         Follow.objects.get(follower=alice, target=bob).status == FollowStatus.ACCEPTED
     )
+
+
+@pytest.mark.django_db
+def test_collections_list_accepted_follows():
+    alice, bob = local("alice"), remote("bob")
+    Follow.objects.create(follower=alice, target=bob, status=FollowStatus.ACCEPTED)
+    pending = remote("carol")
+    Follow.objects.create(follower=pending, target=bob, status=FollowStatus.PENDING)
+    followers = collections.actor_followers(bob, page=1)
+    assert followers["orderedItems"] == [alice.ap_id]
+    following = collections.actor_following(alice, page=1)
+    assert following["orderedItems"] == [bob.ap_id]
+
+
+@pytest.mark.django_db
+def test_publish_fans_out_to_accepted_remote_followers():
+    from django.contrib.auth import get_user_model
+
+    from comics.services import create_comic, create_page, create_series
+    from tests.media_support import make_media
+
+    owner = get_user_model().objects.create_user(email="o@example.com", password="x")
+    comic = create_comic(owner, "lunarbaboon", "Lunar Baboon")
+    series = create_series(owner, comic, "Main Story")
+    page = create_page(owner, series)
+    make_media(page, position=1, alt_text="A panel")
+    page.ap_id = f"http://testserver/pages/{page.id}"
+    bob = remote("bob", shared_inbox="https://bob.test/inbox")
+    Follow.objects.create(
+        follower=bob, target=comic.actor, status=FollowStatus.ACCEPTED
+    )
+
+    emit_page_activity(page, "Create")
+
+    assert Delivery.objects.filter(
+        inbox_url="https://bob.test/inbox", activity__type="Create"
+    ).exists()

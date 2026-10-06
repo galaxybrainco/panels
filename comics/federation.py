@@ -99,7 +99,7 @@ def emit_page_activity(page, activity_type, plan=None):
         to=plan.to,
         cc=plan.cc,
     )
-    return Activity.objects.create(
+    activity = Activity.objects.create(
         ap_id=activity_id,
         type=activity_type,
         actor=page.series.comic.actor,
@@ -107,3 +107,10 @@ def emit_page_activity(page, activity_type, plan=None):
         status=ActivityStatus.PROCESSED,
         payload=payload,
     )
+    from federation.delivery import fan_out
+    from social.services import follower_inboxes
+
+    inboxes = follower_inboxes(page.series.comic.actor)
+    if inboxes:
+        fan_out(payload, inboxes, page.series.comic.actor)
+    return activity
