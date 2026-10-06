@@ -1,3 +1,10 @@
+from uuid import uuid4
+
+from django.core.exceptions import ValidationError
+from django.db import transaction
+
+from federation.activitypub import build_activity
+from federation.delivery import fan_out
 from social.models import Follow, FollowStatus
 
 
@@ -17,3 +24,60 @@ def follower_inboxes(actor):
         if url:
             inboxes.append(url)
     return inboxes
+
+
+def _follow_activity(actor, target):
+    return build_activity(
+        "Follow", actor, target.ap_id, activity_id=f"{actor.ap_id}#follows/{uuid4()}"
+    )
+
+
+def _target_inbox(target):
+    return target.shared_inbox or target.inbox
+
+
+@transaction.atomic
+def follow(local_actor, target):
+    if local_actor == target:
+        raise ValidationError("You cannot follow yourself.")
+    status = FollowStatus.ACCEPTED if target.is_local else FollowStatus.PENDING
+    follow_obj, created = Follow.objects.get_or_create(
+        follower=local_actor, target=target, defaults={"status": status}
+    )
+    if created and not target.is_local:
+        fan_out(
+            _follow_activity(local_actor, target), [_target_inbox(target)], local_actor
+        )
+    return follow_obj
+
+
+@transaction.atomic
+def unfollow(local_actor, target):
+    follow_obj = Follow.objects.filter(follower=local_actor, target=target).first()
+    if follow_obj is None:
+        return None
+    follow_obj.delete()
+    if not target.is_local:
+        undo = build_activity(
+            "Undo",
+            local_actor,
+            _follow_activity(local_actor, target),
+            activity_id=f"{local_actor.ap_id}#unfollows/{uuid4()}",
+        )
+        fan_out(undo, [_target_inbox(target)], local_actor)
+    return None
+
+
+@transaction.atomic
+def accept_follow(follow_obj):
+    follow_obj.status = FollowStatus.ACCEPTED
+    follow_obj.save(update_fields=["status", "updated_at"])
+    if not follow_obj.follower.is_local:
+        accept = build_activity(
+            "Accept",
+            follow_obj.target,
+            _follow_activity(follow_obj.follower, follow_obj.target),
+            activity_id=f"{follow_obj.target.ap_id}#accepts/{uuid4()}",
+        )
+        fan_out(accept, [_target_inbox(follow_obj.follower)], follow_obj.target)
+    return follow_obj

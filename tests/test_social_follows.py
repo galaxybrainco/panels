@@ -3,8 +3,9 @@ from django.db import IntegrityError, transaction
 
 from actors.models import Actor, ActorType
 from actors.services import create_local_actor
+from federation.models import Delivery
 from social.models import Follow, FollowStatus
-from social.services import follower_inboxes
+from social.services import accept_follow, follow, follower_inboxes, unfollow
 
 
 def local(handle="alice"):
@@ -66,3 +67,54 @@ def test_follower_inboxes_dedupes_and_excludes_local_and_pending():
     assert sorted(inboxes) == sorted(
         ["https://one.test/inbox", "https://one.test/inbox", personal.inbox]
     )
+
+
+@pytest.mark.django_db
+def test_follow_local_target_is_accepted_without_delivery():
+    alice, comic = local("alice"), local("comic")
+    result = follow(alice, comic)
+    assert result.status == FollowStatus.ACCEPTED
+    assert Delivery.objects.count() == 0
+
+
+@pytest.mark.django_db
+def test_follow_remote_target_is_pending_and_delivers_follow():
+    alice, bob = local("alice"), remote("bob")
+    result = follow(alice, bob)
+    assert result.status == FollowStatus.PENDING
+    delivery = Delivery.objects.get()
+    assert delivery.inbox_url == bob.inbox
+    assert delivery.activity["type"] == "Follow"
+    assert delivery.activity["object"] == bob.ap_id
+
+
+@pytest.mark.django_db
+def test_follow_is_idempotent():
+    alice, bob = local("alice"), remote("bob")
+    follow(alice, bob)
+    follow(alice, bob)
+    assert Follow.objects.count() == 1
+    assert Delivery.objects.count() == 1
+
+
+@pytest.mark.django_db
+def test_unfollow_remote_delivers_undo():
+    alice, bob = local("alice"), remote("bob")
+    follow(alice, bob)
+    unfollow(alice, bob)
+    assert not Follow.objects.exists()
+    assert Delivery.objects.filter(activity__type="Undo").count() == 1
+
+
+@pytest.mark.django_db
+def test_accept_follow_marks_accepted_and_delivers_accept():
+    bob, comic = remote("bob"), local("comic")
+    incoming = Follow.objects.create(
+        follower=bob, target=comic, status=FollowStatus.PENDING
+    )
+    accept_follow(incoming)
+    incoming.refresh_from_db()
+    assert incoming.status == FollowStatus.ACCEPTED
+    assert Delivery.objects.filter(
+        activity__type="Accept", inbox_url=bob.inbox
+    ).exists()
