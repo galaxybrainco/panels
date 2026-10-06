@@ -3,7 +3,8 @@ from django.db import IntegrityError, transaction
 
 from actors.models import Actor, ActorType
 from actors.services import create_local_actor
-from federation.models import Delivery
+from federation import handlers
+from federation.models import Activity, ActivityDirection, Delivery
 from social.models import Follow, FollowStatus
 from social.services import accept_follow, follow, follower_inboxes, unfollow
 
@@ -118,3 +119,94 @@ def test_accept_follow_marks_accepted_and_delivers_accept():
     assert Delivery.objects.filter(
         activity__type="Accept", inbox_url=bob.inbox
     ).exists()
+
+
+def _inbound(activity_type, actor, payload):
+    return Activity.objects.create(
+        ap_id=payload["id"],
+        type=activity_type,
+        actor=actor,
+        direction=ActivityDirection.INBOUND,
+        payload=payload,
+    )
+
+
+@pytest.mark.django_db
+def test_inbound_follow_auto_accepts_and_delivers_accept():
+    comic = local("comic")
+    bob = remote("bob")
+    payload = {
+        "id": "https://bob.test/activities/1",
+        "type": "Follow",
+        "actor": bob.ap_id,
+        "object": comic.ap_id,
+    }
+    handlers.dispatch(_inbound("Follow", bob, payload))
+    follow_obj = Follow.objects.get(follower=bob, target=comic)
+    assert follow_obj.status == FollowStatus.ACCEPTED
+    assert Delivery.objects.filter(
+        activity__type="Accept", inbox_url=bob.inbox
+    ).exists()
+
+
+@pytest.mark.django_db
+def test_inbound_follow_to_manual_target_stays_pending():
+    comic = local("comic")
+    comic.manually_approves_followers = True
+    comic.save()
+    bob = remote("bob")
+    payload = {
+        "id": "https://bob.test/activities/1",
+        "type": "Follow",
+        "actor": bob.ap_id,
+        "object": comic.ap_id,
+    }
+    handlers.dispatch(_inbound("Follow", bob, payload))
+    assert Follow.objects.get(follower=bob, target=comic).status == FollowStatus.PENDING
+    assert not Delivery.objects.filter(activity__type="Accept").exists()
+
+
+@pytest.mark.django_db
+def test_inbound_duplicate_follow_does_not_double_accept():
+    comic, bob = local("comic"), remote("bob")
+    first = {
+        "id": "https://bob.test/activities/1",
+        "type": "Follow",
+        "actor": bob.ap_id,
+        "object": comic.ap_id,
+    }
+    second = {**first, "id": "https://bob.test/activities/1b"}
+    handlers.dispatch(_inbound("Follow", bob, first))
+    handlers.dispatch(_inbound("Follow", bob, second))
+    assert Follow.objects.count() == 1
+    assert Delivery.objects.filter(activity__type="Accept").count() == 1
+
+
+@pytest.mark.django_db
+def test_inbound_undo_removes_follow():
+    comic, bob = local("comic"), remote("bob")
+    Follow.objects.create(follower=bob, target=comic, status=FollowStatus.ACCEPTED)
+    payload = {
+        "id": "https://bob.test/activities/2",
+        "type": "Undo",
+        "actor": bob.ap_id,
+        "object": {"type": "Follow", "actor": bob.ap_id, "object": comic.ap_id},
+    }
+    handlers.dispatch(_inbound("Undo", bob, payload))
+    assert not Follow.objects.exists()
+
+
+@pytest.mark.django_db
+def test_inbound_accept_accepts_our_pending_follow():
+    alice, bob = local("alice"), remote("bob")
+    follow(alice, bob)  # pending
+    payload = {
+        "id": "https://bob.test/activities/3",
+        "type": "Accept",
+        "actor": bob.ap_id,
+        "object": {"type": "Follow", "actor": alice.ap_id, "object": bob.ap_id},
+    }
+    handlers.dispatch(_inbound("Accept", bob, payload))
+    assert (
+        Follow.objects.get(follower=alice, target=bob).status == FollowStatus.ACCEPTED
+    )
