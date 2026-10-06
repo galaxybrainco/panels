@@ -55,6 +55,9 @@ def publish(page, *, published_by=None, when=None, require_scheduled=False):
             "updated_at",
         ]
     )
+    from comics import federation
+
+    federation.emit_page_activity(locked, "Create")
     return locked
 
 
@@ -69,10 +72,15 @@ def unpublish_page(user, page):
     if not permissions.can_publish(user, page.series.comic):
         raise PermissionDenied("You cannot unpublish this page.")
     locked = Page.objects.select_for_update().get(pk=page.pk)
+    was_published = locked.status == PageStatus.PUBLISHED
     locked.status = PageStatus.DRAFT
     locked.published_at = None
     locked.scheduled_for = None
     locked.save(update_fields=["status", "published_at", "scheduled_for", "updated_at"])
+    if was_published:
+        from comics import federation
+
+        federation.emit_page_activity(locked, "Delete")
     return locked
 
 

@@ -1,0 +1,691 @@
+# Ticket 6 — Page → Note Federation Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Serialize published pages to Mastodon-legible `Note` objects, emit `Create`/`Update`/`Delete` for federated pages into the comic actor's outbox, and serve a dereferenceable `Note` endpoint.
+
+**Architecture:** `comics/federation.py` is the single page-federation seam: `federation_plan(page)` decides eligibility and addressing, `page_to_note(page)` builds the object (type `Note` in one place so an `Article` option can be added later), and `emit_page_activity(page, type, plan=None)` records an outbound `Activity` row. Hooks in `comics/publishing.py` (`publish`→Create, `unpublish_page`→Delete) and a new `comics/services.update_page` (→Update, or Delete when an edit withdraws the page) drive emission. A `comics/views.page_detail` endpoint serves the Note at its object id. Follower fan-out is deferred to Ticket 7 (no `Follow` model yet).
+
+**Tech Stack:** Django 6.1.1, PostgreSQL, existing `federation`/`actors`/`media` primitives, pytest-django, ruff.
+
+**Spec:** `webcomic-fediverse-plan.md` §5 (objects — a page as `Note`, addressing, federation), §7 (gated content never federates; centralize in `federation_plan(page)`), §8 (CW/`sensitive`), §10 (Mastodon-legible baseline), §14 ticket 6.
+
+## Global Constraints
+
+- Synchronous Django only. Run Python via `uv run` (Python 3.14).
+- Object type is **`Note`** (spec-locked), chosen in one place (`page_to_note`) so `Article` can be added per page later; attachments are `Document` items with `name` = alt text and `url` = `derivative_url(media, FEDERATION)`.
+- Membership/Tier audience and `local-only` federation **never emit** activity or serve the AP object (gated content never federates, §7).
+- Eligibility/addressing is centralized in `federation_plan(page)`; nothing else branches on audience/federation.
+- `Create` fires once per publish (a re-publish/retry must not duplicate); `Delete` when a previously-federated page is unpublished or withdrawn.
+- No follower fan-out in this ticket; emission records outbound `Activity` rows only, which `federation.collections.actor_outbox` already exposes.
+- Every task ends green on: `uv run pytest`, `uv run ruff check .`, `uv run ruff format --check .`, `uv run python manage.py makemigrations --check --dry-run`.
+- Dev DB: `docker compose up -d db`.
+
+## Review Focus
+
+Spec-implied failure modes no happy path exercises; each is pinned by a test in its owning task:
+
+- A **Members/Tier** page and a **local-only** page must produce no outbound activity and no servable Note. Tasks 1, 2, 4.
+- Publishing must emit **exactly one** `Create` (idempotent re-publish/retry). Task 2.
+- Unpublishing a federated page must emit `Delete`; unpublishing a page that was never federated must not. Task 2.
+- An edit that flips a published page to Members/local-only must **withdraw** it (`Delete`), not `Update`. Task 3.
+- A contributor (draft-only) must not edit a published page. Task 3.
+- The Note endpoint must **404** for drafts and Members/Tier pages. Task 4.
+
+## File Structure
+
+- `comics/federation.py` — new: `FederationPlan`, `federation_plan`, `page_to_note`, `emit_page_activity`. (Tasks 1–2)
+- `comics/publishing.py` — Create/Delete hooks. (Task 2)
+- `comics/services.py` — `update_page`. (Task 3)
+- `comics/views.py`, `comics/urls.py` (new), `config/urls.py` — Note endpoint. (Task 4)
+- `FEDERATION.md` — advertise the Note + activities. (Task 4)
+- `tests/test_comics_federation.py` — new, extended across tasks.
+
+---
+
+### Task 1: Federation plan, Note serializer, and activity emission
+
+**Files:**
+- Create: `comics/federation.py`
+- Test: `tests/test_comics_federation.py`
+
+**Interfaces:**
+- Consumes: `comics.models.{FederationMode, Page}`, `federation.activitypub.{PUBLIC, Audience, activity_context, addressing_for, build_activity}`, `federation.models.{Activity, ActivityDirection, ActivityStatus}`, `media.derivative_urls.{DerivativeKind, derivative_url}`, `tests.media_support.make_media`.
+- Produces:
+  - `FederationPlan(emit: bool, to: list, cc: list)`.
+  - `federation_plan(page) -> FederationPlan`.
+  - `page_to_note(page, plan=None) -> dict`.
+  - `emit_page_activity(page, activity_type, plan=None) -> Activity | None`.
+
+- [ ] **Step 1: Write the failing tests**
+
+Create `tests/test_comics_federation.py`:
+
+```python
+import pytest
+from django.contrib.auth import get_user_model
+from django.test import override_settings
+from django.utils import timezone
+
+from comics.federation import (
+    emit_page_activity,
+    federation_plan,
+    page_to_note,
+)
+from comics.models import FederationMode
+from comics.services import create_comic, create_page, create_series
+from federation.activitypub import PUBLIC, Audience
+from federation.models import Activity, ActivityDirection, ActivityStatus
+from tests.media_support import make_media
+
+
+def _scene(**page_fields):
+    owner = get_user_model().objects.create_user(email="owner@example.com", password="x")
+    comic = create_comic(owner, "lunarbaboon", "Lunar Baboon")
+    series = create_series(owner, comic, "Main Story")
+    page = create_page(owner, series, **page_fields)
+    make_media(page, position=1, alt_text="A panel")
+    return owner, comic, series, page
+
+
+def _published(page):
+    page.ap_id = f"http://testserver/pages/{page.id}"
+    page.published_at = timezone.now()
+    page.save()
+    return page
+
+
+@pytest.mark.django_db
+def test_plan_public_federated():
+    _, comic, _, page = _scene()
+    plan = federation_plan(page)
+    assert plan.emit is True
+    assert PUBLIC in plan.to
+    assert comic.actor.followers in plan.cc
+
+
+@pytest.mark.django_db
+def test_plan_unlisted():
+    _, comic, _, page = _scene(audience=Audience.UNLISTED)
+    plan = federation_plan(page)
+    assert plan.emit is True
+    assert comic.actor.followers in plan.to
+    assert PUBLIC in plan.cc
+
+
+@pytest.mark.django_db
+def test_plan_followers_only():
+    _, comic, _, page = _scene(audience=Audience.FOLLOWERS_ONLY)
+    plan = federation_plan(page)
+    assert plan.emit is True
+    assert plan.to == [comic.actor.followers]
+    assert plan.cc == []
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("audience", [Audience.MEMBERS, Audience.TIER])
+def test_plan_members_and_tier_do_not_emit(audience):
+    _, _, _, page = _scene(audience=audience)
+    assert federation_plan(page).emit is False
+
+
+@pytest.mark.django_db
+def test_plan_local_only_does_not_emit():
+    _, _, _, page = _scene(federation=FederationMode.LOCAL_ONLY)
+    assert federation_plan(page).emit is False
+
+
+@pytest.mark.django_db
+def test_page_to_note_shape():
+    _, comic, _, page = _scene(title="Chapter One")
+    page = _published(page)
+    note = page_to_note(page)
+    assert note["type"] == "Note"
+    assert note["id"] == page.ap_id
+    assert note["url"] == page.ap_id
+    assert note["attributedTo"] == comic.actor.ap_id
+    assert note["published"] == page.published_at.isoformat()
+    assert "Chapter One" in note["content"]
+    assert "Read on Panels" in note["content"]
+    assert len(note["attachment"]) == 1
+    assert note["attachment"][0]["name"] == "A panel"
+
+
+@pytest.mark.django_db
+def test_note_sensitive_and_content_warning():
+    _, _, _, page = _scene(sensitive=True, content_warning="Flashing")
+    page = _published(page)
+    note = page_to_note(page)
+    assert note["sensitive"] is True
+    assert note["summary"] == "Flashing"
+
+
+@pytest.mark.django_db
+@override_settings(
+    MEDIA_DERIVATIVE_BACKEND="media.derivative_urls.BunnyOptimizerBackend",
+    MEDIA_CDN_BASE_URL="https://cdn.test",
+)
+def test_note_attachment_uses_federation_derivative():
+    _, _, _, page = _scene()
+    page = _published(page)
+    attachment = page_to_note(page)["attachment"][0]
+    assert attachment["type"] == "Document"
+    assert attachment["mediaType"] == "image/png"
+    assert attachment["url"].startswith("https://cdn.test/")
+    assert "format=jpeg" in attachment["url"]
+
+
+@pytest.mark.django_db
+def test_emit_page_activity_records_outbound_activity():
+    _, comic, _, page = _scene()
+    page = _published(page)
+    activity = emit_page_activity(page, "Create")
+    assert activity.direction == ActivityDirection.OUTBOUND
+    assert activity.status == ActivityStatus.PROCESSED
+    assert activity.type == "Create"
+    assert activity.actor == comic.actor
+    assert activity.payload["actor"] == comic.actor.ap_id
+    assert activity.payload["object"]["type"] == "Note"
+
+
+@pytest.mark.django_db
+def test_emit_page_activity_is_noop_when_not_eligible():
+    _, _, _, page = _scene(audience=Audience.MEMBERS)
+    assert emit_page_activity(page, "Create") is None
+    assert Activity.objects.count() == 0
+
+
+@pytest.mark.django_db
+def test_emit_delete_uses_object_id():
+    _, _, _, page = _scene()
+    page = _published(page)
+    activity = emit_page_activity(page, "Delete")
+    assert activity.payload["object"] == page.ap_id
+```
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `uv run pytest tests/test_comics_federation.py -q`
+Expected: ERROR — `comics.federation` does not exist.
+
+- [ ] **Step 3: Implement `comics/federation.py`**
+
+```python
+from dataclasses import dataclass, field
+from uuid import uuid4
+
+from django.conf import settings
+from django.utils.html import escape
+
+from comics.models import FederationMode
+from federation.activitypub import (
+    PUBLIC,
+    Audience,
+    activity_context,
+    addressing_for,
+    build_activity,
+)
+from federation.models import Activity, ActivityDirection, ActivityStatus
+from media.derivative_urls import DerivativeKind, derivative_url
+
+
+@dataclass(frozen=True)
+class FederationPlan:
+    emit: bool
+    to: list = field(default_factory=list)
+    cc: list = field(default_factory=list)
+
+
+def _page_url(page) -> str:
+    return f"{settings.INSTANCE_URL}/pages/{page.id}"
+
+
+def _note_id(page) -> str:
+    return page.ap_id or _page_url(page)
+
+
+def federation_plan(page) -> FederationPlan:
+    if page.federation == FederationMode.LOCAL_ONLY:
+        return FederationPlan(emit=False)
+    if page.audience in (Audience.MEMBERS, Audience.TIER):
+        return FederationPlan(emit=False)
+    to, cc = addressing_for(page.audience, page.series.comic.actor.followers)
+    return FederationPlan(emit=True, to=list(to), cc=list(cc))
+
+
+def _note_content(page, url) -> str:
+    parts = []
+    if page.title:
+        parts.append(f"<p>{escape(page.title)}</p>")
+    lines = page.author_commentary.strip().splitlines()
+    if lines:
+        parts.append(f"<p>{escape(lines[0])}</p>")
+    parts.append(f'<p><a href="{escape(url)}">Read on Panels</a></p>')
+    return "".join(parts)
+
+
+def _attachment(media) -> dict:
+    attachment = {
+        "type": "Document",
+        "mediaType": media.content_type,
+        "url": derivative_url(media, DerivativeKind.FEDERATION),
+        "name": media.alt_text,
+    }
+    if media.width and media.height:
+        attachment["width"] = media.width
+        attachment["height"] = media.height
+    return attachment
+
+
+def page_to_note(page, plan=None) -> dict:
+    plan = plan or federation_plan(page)
+    note_id = _note_id(page)
+    note = {
+        "@context": activity_context(),
+        "id": note_id,
+        "type": "Note",
+        "attributedTo": page.series.comic.actor.ap_id,
+        "url": note_id,
+        "sensitive": page.sensitive,
+        "content": _note_content(page, note_id),
+        "to": plan.to,
+        "cc": plan.cc,
+        "attachment": [_attachment(media) for media in page.media.all()],
+    }
+    if page.published_at is not None:
+        note["published"] = page.published_at.isoformat()
+    if page.content_warning:
+        note["summary"] = page.content_warning
+    return note
+
+
+def emit_page_activity(page, activity_type, plan=None):
+    plan = plan or federation_plan(page)
+    if not plan.emit:
+        return None
+    note_id = _note_id(page)
+    obj = note_id if activity_type == "Delete" else page_to_note(page, plan=plan)
+    activity_id = f"{note_id}/activities/{uuid4()}"
+    payload = build_activity(
+        activity_type,
+        page.series.comic.actor,
+        obj,
+        activity_id=activity_id,
+        to=plan.to,
+        cc=plan.cc,
+    )
+    return Activity.objects.create(
+        ap_id=activity_id,
+        type=activity_type,
+        actor=page.series.comic.actor,
+        direction=ActivityDirection.OUTBOUND,
+        status=ActivityStatus.PROCESSED,
+        payload=payload,
+    )
+```
+
+- [ ] **Step 4: Run the tests to verify they pass**
+
+Run: `uv run pytest tests/test_comics_federation.py -q`
+Expected: PASS (12 passed).
+
+- [ ] **Step 5: Run the full suite and lint**
+
+Run: `uv run pytest -q && uv run ruff check . && uv run ruff format --check . && uv run python manage.py makemigrations --check --dry-run`
+Expected: all green.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add comics/federation.py tests/test_comics_federation.py
+git commit -m "feat: page federation_plan, Note serializer, and activity emission"
+```
+
+---
+
+### Task 2: Emit Create on publish and Delete on unpublish
+
+**Files:**
+- Modify: `comics/publishing.py`
+- Test: `tests/test_comics_federation.py`
+
+**Interfaces:**
+- Consumes: Task 1 `emit_page_activity`; `comics.publishing.publish_page`/`unpublish_page` (existing).
+- Produces: `Create` on the publish transition; `Delete` on unpublish of a previously-published page.
+
+- [ ] **Step 1: Add the failing tests**
+
+Append to `tests/test_comics_federation.py` (add to imports: `from comics.publishing import publish_page, unpublish_page` and `from federation import collections`):
+
+```python
+@pytest.mark.django_db
+def test_publish_emits_create_and_outbox_lists_it():
+    owner, comic, _, page = _scene()
+    publish_page(owner, page)
+    activity = Activity.objects.get(type="Create")
+    assert activity.actor == comic.actor
+    outbox = collections.actor_outbox(comic.actor, page=1)
+    assert any(item["type"] == "Create" for item in outbox["orderedItems"])
+
+
+@pytest.mark.django_db
+def test_publish_is_idempotent_for_activity():
+    owner, _, _, page = _scene()
+    publish_page(owner, page)
+    publish_page(owner, page)
+    assert Activity.objects.filter(type="Create").count() == 1
+
+
+@pytest.mark.django_db
+def test_publish_members_does_not_emit():
+    owner, _, _, page = _scene(audience=Audience.MEMBERS)
+    publish_page(owner, page)
+    assert not Activity.objects.filter(direction=ActivityDirection.OUTBOUND).exists()
+
+
+@pytest.mark.django_db
+def test_unpublish_emits_delete():
+    owner, _, _, page = _scene()
+    publish_page(owner, page)
+    unpublish_page(owner, page)
+    assert Activity.objects.filter(type="Delete").count() == 1
+```
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `uv run pytest tests/test_comics_federation.py -q`
+Expected: FAIL — no `Create`/`Delete` activities are created.
+
+- [ ] **Step 3: Add the hooks to `comics/publishing.py`**
+
+In `publish(...)`, replace the final `return locked` (after the successful `locked.save(...)`) with:
+
+```python
+    from comics import federation
+
+    federation.emit_page_activity(locked, "Create")
+    return locked
+```
+
+In `unpublish_page(...)`, after fetching the locked row, capture whether it was published, and emit after saving:
+
+```python
+    locked = Page.objects.select_for_update().get(pk=page.pk)
+    was_published = locked.status == PageStatus.PUBLISHED
+    locked.status = PageStatus.DRAFT
+    locked.published_at = None
+    locked.scheduled_for = None
+    locked.save(
+        update_fields=["status", "published_at", "scheduled_for", "updated_at"]
+    )
+    if was_published:
+        from comics import federation
+
+        federation.emit_page_activity(locked, "Delete")
+    return locked
+```
+
+- [ ] **Step 4: Run the tests to verify they pass**
+
+Run: `uv run pytest tests/test_comics_federation.py -q`
+Expected: PASS (16 passed).
+
+- [ ] **Step 5: Run the full suite and lint**
+
+Run: `uv run pytest -q && uv run ruff check . && uv run ruff format --check . && uv run python manage.py makemigrations --check --dry-run`
+Expected: all green.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add comics/publishing.py tests/test_comics_federation.py
+git commit -m "feat: emit Create on publish and Delete on unpublish"
+```
+
+---
+
+### Task 3: `update_page` service with Update / withdrawal
+
+**Files:**
+- Modify: `comics/services.py`
+- Test: `tests/test_comics_federation.py`
+
+**Interfaces:**
+- Consumes: `comics.permissions.{can_author, can_publish}`, `comics.federation.{federation_plan, emit_page_activity}`.
+- Produces: `update_page(user, page, **fields) -> Page`.
+
+- [ ] **Step 1: Add the failing tests**
+
+Append to `tests/test_comics_federation.py` (add to imports: `from django.core.exceptions import PermissionDenied`, `from comics.models import ComicRole, FederationMode` already partly imported, `from comics.services import update_page`):
+
+```python
+@pytest.mark.django_db
+def test_update_page_applies_fields_and_emits_update():
+    owner, _, _, page = _scene()
+    published = publish_page(owner, page)
+    update_page(owner, published, title="Retitled")
+    published.refresh_from_db()
+    assert published.title == "Retitled"
+    assert Activity.objects.filter(type="Update").count() == 1
+
+
+@pytest.mark.django_db
+def test_update_page_to_local_only_withdraws_with_delete():
+    owner, _, _, page = _scene()
+    published = publish_page(owner, page)
+    update_page(owner, published, federation=FederationMode.LOCAL_ONLY)
+    assert Activity.objects.filter(type="Update").count() == 0
+    assert Activity.objects.filter(type="Delete").count() == 1
+
+
+@pytest.mark.django_db
+def test_update_page_permissions():
+    owner, comic, _, page = _scene()
+    contributor = get_user_model().objects.create_user(
+        email="contributor@example.com", password="x"
+    )
+    ComicRole.objects.create(
+        comic=comic, user=contributor, role=ComicRole.Role.CONTRIBUTOR
+    )
+    assert update_page(contributor, page, title="Draft edit").title == "Draft edit"
+    published = publish_page(owner, page)
+    with pytest.raises(PermissionDenied):
+        update_page(contributor, published, title="Nope")
+
+
+@pytest.mark.django_db
+def test_update_page_rejects_unknown_fields():
+    owner, _, _, page = _scene()
+    with pytest.raises(TypeError):
+        update_page(owner, page, position=99)
+```
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `uv run pytest tests/test_comics_federation.py -q`
+Expected: ERROR — `comics.services` has no `update_page`.
+
+- [ ] **Step 3: Implement `update_page` in `comics/services.py`**
+
+Add `UPDATE_FIELDS` near `PAGE_OVERRIDE_FIELDS` and append the service:
+
+```python
+UPDATE_FIELDS = {
+    "title",
+    "transcript",
+    "author_commentary",
+    "content_warning",
+    "sensitive",
+    "audience",
+    "federation",
+}
+
+
+@transaction.atomic
+def update_page(user, page, **fields):
+    comic = page.series.comic
+    if not permissions.can_author(user, comic):
+        raise PermissionDenied("You cannot edit this page.")
+    unknown = set(fields) - UPDATE_FIELDS
+    if unknown:
+        raise TypeError(f"Unsupported page fields: {sorted(unknown)}")
+    locked = Page.objects.select_for_update().get(pk=page.pk)
+    if locked.status == PageStatus.PUBLISHED and not permissions.can_publish(
+        user, comic
+    ):
+        raise PermissionDenied("You cannot edit a published page.")
+    if "audience" in fields:
+        _validate_choice(fields["audience"], Audience, "audience")
+    if "federation" in fields:
+        _validate_choice(fields["federation"], FederationMode, "federation")
+
+    from comics import federation
+
+    was_plan = federation.federation_plan(locked)
+    for name, value in fields.items():
+        setattr(locked, name, value)
+    locked.save()
+    if locked.status == PageStatus.PUBLISHED:
+        plan = federation.federation_plan(locked)
+        if plan.emit:
+            federation.emit_page_activity(locked, "Update")
+        elif was_plan.emit:
+            federation.emit_page_activity(locked, "Delete", plan=was_plan)
+    return locked
+```
+
+- [ ] **Step 4: Run the tests to verify they pass**
+
+Run: `uv run pytest tests/test_comics_federation.py -q`
+Expected: PASS (20 passed).
+
+- [ ] **Step 5: Run the full suite and lint**
+
+Run: `uv run pytest -q && uv run ruff check . && uv run ruff format --check . && uv run python manage.py makemigrations --check --dry-run`
+Expected: all green.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add comics/services.py tests/test_comics_federation.py
+git commit -m "feat: update_page service emitting Update or withdrawal Delete"
+```
+
+---
+
+### Task 4: Dereferenceable Note endpoint
+
+**Files:**
+- Create: `comics/views.py`, `comics/urls.py`
+- Modify: `config/urls.py`, `FEDERATION.md`
+- Test: `tests/test_comics_federation.py`
+
+**Interfaces:**
+- Consumes: Task 1 `page_to_note`; `comics.models.{Page, PageStatus}`; `actors.activitypub.ACTIVITYPUB_CONTENT_TYPE`.
+- Produces: `comics.views.page_detail(request, id)`, route name `page-detail` at `pages/<uuid:id>`.
+
+- [ ] **Step 1: Add the failing tests**
+
+Append to `tests/test_comics_federation.py`:
+
+```python
+@pytest.mark.django_db
+def test_note_endpoint_serves_published_page(client):
+    owner, _, _, page = _scene()
+    publish_page(owner, page)
+    response = client.get(f"/pages/{page.id}")
+    assert response.status_code == 200
+    assert response["Content-Type"].startswith("application/activity+json")
+    assert response.json()["type"] == "Note"
+
+
+@pytest.mark.django_db
+def test_note_endpoint_404_for_draft(client):
+    _, _, _, page = _scene()
+    response = client.get(f"/pages/{page.id}")
+    assert response.status_code == 404
+
+
+@pytest.mark.django_db
+def test_note_endpoint_404_for_members_page(client):
+    owner, _, _, page = _scene(audience=Audience.MEMBERS)
+    publish_page(owner, page)
+    assert client.get(f"/pages/{page.id}").status_code == 404
+```
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `uv run pytest tests/test_comics_federation.py -q -k endpoint`
+Expected: FAIL — 404 for everything (no route) / no view.
+
+- [ ] **Step 3: Implement the view and route**
+
+Create `comics/views.py`:
+
+```python
+from django.http import Http404, JsonResponse
+from django.shortcuts import get_object_or_404
+
+from actors.activitypub import ACTIVITYPUB_CONTENT_TYPE
+from comics.federation import page_to_note
+from comics.models import Page, PageStatus
+from federation.activitypub import Audience
+
+
+def page_detail(request, id):
+    page = get_object_or_404(Page, pk=id, status=PageStatus.PUBLISHED)
+    if page.audience in (Audience.MEMBERS, Audience.TIER):
+        raise Http404
+    response = JsonResponse(page_to_note(page), content_type=ACTIVITYPUB_CONTENT_TYPE)
+    response["Access-Control-Allow-Origin"] = "*"
+    return response
+```
+
+Create `comics/urls.py`:
+
+```python
+from django.urls import path
+
+from comics import views
+
+urlpatterns = [
+    path("pages/<uuid:id>", views.page_detail, name="page-detail"),
+]
+```
+
+In `config/urls.py`, add `path("", include("comics.urls"))` to `urlpatterns`.
+
+In `FEDERATION.md`, add under `## Implemented`:
+
+```markdown
+- **Page `Note` objects** — published pages serialize to ActivityStreams `Note`s with image attachments at `{INSTANCE_URL}/pages/{id}` (`application/activity+json`); `Create`/`Update`/`Delete` are emitted for federated pages and exposed in the comic actor's outbox.
+```
+
+- [ ] **Step 4: Run the tests to verify they pass**
+
+Run: `uv run pytest tests/test_comics_federation.py -q`
+Expected: PASS (23 passed).
+
+- [ ] **Step 5: Run the full suite and lint**
+
+Run: `uv run pytest -q && uv run ruff check . && uv run ruff format --check . && uv run python manage.py makemigrations --check --dry-run`
+Expected: all green.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add comics/views.py comics/urls.py config/urls.py FEDERATION.md tests/test_comics_federation.py
+git commit -m "feat: serve page Notes at their object id"
+```
+
+---
+
+## Self-Review
+
+**Spec coverage (Ticket 6 scope):** Page→`Note` serializer with attachments/alt/CW/link-back (§5); `federation_plan(page)` centralizes emit + addressing (§5/§7); `Create`/`Update`/`Delete` emission recorded in the actor outbox (§5); gating guard at the serializer for Members/Tier and local-only (§7); dereferenceable object id (§5). Out of scope by design: follower fan-out/inbox delivery (Ticket 7), on-site reader URL (Note `url` = object id for now), member teaser Note (§7 exclusive pattern), media-alt-edit Update, reply/thread handling.
+
+**Placeholder scan:** no TBD/TODO steps; every code and test step is complete (Task 3 includes the corrected `was_plan` form).
+
+**Type consistency:** `FederationPlan`/`federation_plan` are the single eligibility/address path; `page_to_note` is the single object builder (type chosen once); `emit_page_activity(page, type, plan=None)` is the single emission path; `UPDATE_FIELDS` bounds `update_page`.
+
+**Review Focus coverage:** Members/local-only no-emit — Tasks 1, 2, 4; single Create — Task 2; Delete on unpublish — Task 2; withdraw Delete on edit — Task 3; contributor blocked on published — Task 3; endpoint 404s — Task 4.
