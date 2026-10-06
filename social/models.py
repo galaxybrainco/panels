@@ -18,6 +18,7 @@ class Follow(UUIDModel):
     status = models.CharField(
         max_length=16, choices=FollowStatus.choices, default=FollowStatus.PENDING
     )
+    activity_id = models.CharField(max_length=255, blank=True, default="")
 
     class Meta:
         constraints = [

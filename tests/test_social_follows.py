@@ -1,4 +1,5 @@
 import pytest
+from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 
 from actors.models import Actor, ActorType
@@ -248,3 +249,155 @@ def test_publish_fans_out_to_accepted_remote_followers():
     assert Delivery.objects.filter(
         inbox_url="https://bob.test/inbox", activity__type="Create"
     ).exists()
+
+
+@pytest.mark.django_db
+def test_self_follow_service_rejects():
+    alice = local("alice")
+    with pytest.raises(ValidationError):
+        follow(alice, alice)
+
+
+@pytest.mark.django_db
+def test_follow_stores_activity_id_and_accept_by_string_references_it():
+    alice, bob = local("alice"), remote("bob")
+    follow_obj = follow(alice, bob)
+    assert follow_obj.activity_id
+    delivered = Delivery.objects.get(activity__type="Follow").activity
+    assert delivered["id"] == follow_obj.activity_id
+
+    payload = {
+        "id": "https://bob.test/activities/9",
+        "type": "Accept",
+        "actor": bob.ap_id,
+        "object": follow_obj.activity_id,
+    }
+    handlers.dispatch(_inbound("Accept", bob, payload))
+    assert Follow.objects.get(pk=follow_obj.pk).status == FollowStatus.ACCEPTED
+
+
+@pytest.mark.django_db
+def test_accept_by_string_only_accepts_the_matching_follow():
+    alice, carol, bob = local("alice"), local("carol"), remote("bob")
+    alice_follow = follow(alice, bob)
+    carol_follow = follow(carol, bob)
+    payload = {
+        "id": "https://bob.test/activities/9",
+        "type": "Accept",
+        "actor": bob.ap_id,
+        "object": alice_follow.activity_id,
+    }
+    handlers.dispatch(_inbound("Accept", bob, payload))
+    assert Follow.objects.get(pk=alice_follow.pk).status == FollowStatus.ACCEPTED
+    assert Follow.objects.get(pk=carol_follow.pk).status == FollowStatus.PENDING
+
+
+@pytest.mark.django_db
+def test_accept_for_a_different_target_is_ignored():
+    alice, bob, dave = local("alice"), remote("bob"), remote("dave")
+    follow_obj = follow(alice, bob)
+    payload = {
+        "id": "https://bob.test/activities/9",
+        "type": "Accept",
+        "actor": bob.ap_id,
+        "object": {"type": "Follow", "actor": alice.ap_id, "object": dave.ap_id},
+    }
+    handlers.dispatch(_inbound("Accept", bob, payload))
+    assert Follow.objects.get(pk=follow_obj.pk).status == FollowStatus.PENDING
+
+
+@pytest.mark.django_db
+def test_inbound_follow_stores_original_id_and_accept_references_it():
+    comic, bob = local("comic"), remote("bob")
+    payload = {
+        "id": "https://bob.test/activities/1",
+        "type": "Follow",
+        "actor": bob.ap_id,
+        "object": comic.ap_id,
+    }
+    handlers.dispatch(_inbound("Follow", bob, payload))
+    follow_obj = Follow.objects.get(follower=bob, target=comic)
+    assert follow_obj.activity_id == "https://bob.test/activities/1"
+    accept = Delivery.objects.get(activity__type="Accept").activity
+    assert accept["object"]["id"] == "https://bob.test/activities/1"
+
+
+@pytest.mark.django_db
+def test_inbound_undo_with_string_object_removes_follow():
+    comic, bob = local("comic"), remote("bob")
+    Follow.objects.create(
+        follower=bob,
+        target=comic,
+        status=FollowStatus.ACCEPTED,
+        activity_id="https://bob.test/activities/1",
+    )
+    payload = {
+        "id": "https://bob.test/activities/2",
+        "type": "Undo",
+        "actor": bob.ap_id,
+        "object": "https://bob.test/activities/1",
+    }
+    handlers.dispatch(_inbound("Undo", bob, payload))
+    assert not Follow.objects.exists()
+
+
+@pytest.mark.django_db
+def test_unfollow_undo_references_original_follow_id():
+    alice, bob = local("alice"), remote("bob")
+    follow_obj = follow(alice, bob)
+    unfollow(alice, bob)
+    undo = Delivery.objects.get(activity__type="Undo").activity
+    assert undo["object"]["id"] == follow_obj.activity_id
+
+
+@pytest.mark.django_db
+def test_fan_out_dedupes_shared_inbox():
+    from django.contrib.auth import get_user_model
+
+    from comics.services import create_comic, create_page, create_series
+    from tests.media_support import make_media
+
+    owner = get_user_model().objects.create_user(email="o@example.com", password="x")
+    comic = create_comic(owner, "lunarbaboon", "Lunar Baboon")
+    series = create_series(owner, comic, "Main Story")
+    page = create_page(owner, series)
+    make_media(page, position=1, alt_text="A panel")
+    page.ap_id = f"http://testserver/pages/{page.id}"
+    one = remote("one", shared_inbox="https://shared.test/inbox")
+    two = remote("two", shared_inbox="https://shared.test/inbox")
+    for follower in (one, two):
+        Follow.objects.create(
+            follower=follower, target=comic.actor, status=FollowStatus.ACCEPTED
+        )
+
+    emit_page_activity(page, "Create")
+
+    assert (
+        Delivery.objects.filter(
+            inbox_url="https://shared.test/inbox", activity__type="Create"
+        ).count()
+        == 1
+    )
+
+
+@pytest.mark.django_db
+def test_gated_page_does_not_fan_out():
+    from django.contrib.auth import get_user_model
+
+    from comics.services import create_comic, create_page, create_series
+    from federation.activitypub import Audience
+    from tests.media_support import make_media
+
+    owner = get_user_model().objects.create_user(email="o@example.com", password="x")
+    comic = create_comic(owner, "lunarbaboon", "Lunar Baboon")
+    series = create_series(owner, comic, "Main Story")
+    page = create_page(owner, series, audience=Audience.MEMBERS)
+    make_media(page, position=1, alt_text="A panel")
+    page.ap_id = f"http://testserver/pages/{page.id}"
+    bob = remote("bob")
+    Follow.objects.create(
+        follower=bob, target=comic.actor, status=FollowStatus.ACCEPTED
+    )
+
+    assert emit_page_activity(page, "Create") is None
+    assert Delivery.objects.count() == 0
