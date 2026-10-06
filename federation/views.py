@@ -27,12 +27,16 @@ def actor_outbox(request, handle):
 
 def actor_followers(request, handle):
     actor = get_object_or_404(Actor, handle=handle, domain="")
-    return JsonResponse(collections.empty_collection(actor.followers))
+    page_param = request.GET.get("page")
+    page = int(page_param) if page_param and page_param.isdigit() else None
+    return JsonResponse(collections.actor_followers(actor, page=page))
 
 
 def actor_following(request, handle):
     actor = get_object_or_404(Actor, handle=handle, domain="")
-    return JsonResponse(collections.empty_collection(actor.following))
+    page_param = request.GET.get("page")
+    page = int(page_param) if page_param and page_param.isdigit() else None
+    return JsonResponse(collections.actor_following(actor, page=page))
 
 
 def actor_featured(request, handle):
