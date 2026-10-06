@@ -33,3 +33,49 @@ class Follow(UUIDModel):
 
     def __str__(self):
         return f"{self.follower} → {self.target} ({self.status})"
+
+
+class Like(UUIDModel):
+    actor = models.ForeignKey(
+        "actors.Actor", on_delete=models.CASCADE, related_name="likes"
+    )
+    object_id = models.URLField()
+    page = models.ForeignKey(
+        "comics.Page",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="likes",
+    )
+    activity_id = models.CharField(max_length=255, blank=True, default="")
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["actor", "object_id"], name="unique_like")
+        ]
+
+    def __str__(self):
+        return f"{self.actor} likes {self.object_id}"
+
+
+class Boost(UUIDModel):
+    actor = models.ForeignKey(
+        "actors.Actor", on_delete=models.CASCADE, related_name="boosts"
+    )
+    object_id = models.URLField()
+    page = models.ForeignKey(
+        "comics.Page",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="boosts",
+    )
+    activity_id = models.CharField(max_length=255, blank=True, default="")
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["actor", "object_id"], name="unique_boost")
+        ]
+
+    def __str__(self):
+        return f"{self.actor} boosted {self.object_id}"
