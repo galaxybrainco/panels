@@ -240,3 +240,70 @@ def test_undo_follow_still_removed():
     }
     handlers.dispatch(_inbound("Undo", bob, payload))
     assert not Follow.objects.exists()
+
+
+@pytest.mark.django_db
+def test_inbound_like_with_embedded_object():
+    page, bob = published_page(), remote("bob")
+    payload = {
+        "id": "https://bob.test/activities/1",
+        "type": "Like",
+        "actor": bob.ap_id,
+        "object": {"id": page.ap_id, "type": "Note"},
+    }
+    handlers.dispatch(_inbound("Like", bob, payload))
+    assert Like.objects.get(actor=bob).page == page
+
+
+@pytest.mark.django_db
+def test_inbound_like_backfills_activity_id_on_existing_row():
+    page, bob = published_page(), remote("bob")
+    Like.objects.create(actor=bob, object_id=page.ap_id, page=page, activity_id="")
+    payload = {
+        "id": "https://bob.test/activities/1",
+        "type": "Like",
+        "actor": bob.ap_id,
+        "object": page.ap_id,
+    }
+    handlers.dispatch(_inbound("Like", bob, payload))
+    assert Like.objects.get(actor=bob).activity_id == "https://bob.test/activities/1"
+
+
+@pytest.mark.django_db
+def test_inbound_like_then_undo_by_activity_id():
+    page, bob = published_page(), remote("bob")
+    like_payload = {
+        "id": "https://bob.test/activities/1",
+        "type": "Like",
+        "actor": bob.ap_id,
+        "object": page.ap_id,
+    }
+    handlers.dispatch(_inbound("Like", bob, like_payload))
+    undo_payload = {
+        "id": "https://bob.test/activities/2",
+        "type": "Undo",
+        "actor": bob.ap_id,
+        "object": "https://bob.test/activities/1",
+    }
+    handlers.dispatch(_inbound("Undo", bob, undo_payload))
+    assert not Like.objects.exists()
+
+
+@pytest.mark.django_db
+def test_inbound_announce_then_undo_by_activity_id():
+    page, bob = published_page(), remote("bob")
+    announce_payload = {
+        "id": "https://bob.test/activities/1",
+        "type": "Announce",
+        "actor": bob.ap_id,
+        "object": page.ap_id,
+    }
+    handlers.dispatch(_inbound("Announce", bob, announce_payload))
+    undo_payload = {
+        "id": "https://bob.test/activities/2",
+        "type": "Undo",
+        "actor": bob.ap_id,
+        "object": "https://bob.test/activities/1",
+    }
+    handlers.dispatch(_inbound("Undo", bob, undo_payload))
+    assert not Boost.objects.exists()
