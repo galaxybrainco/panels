@@ -233,3 +233,36 @@ def test_inbound_create_is_idempotent():
     handlers.dispatch(_inbound("Create", bob, first))
     handlers.dispatch(_inbound("Create", bob, {**first, "id": "https://bob.test/a/2"}))
     assert Comment.objects.count() == 1
+
+
+@pytest.mark.django_db
+def test_comment_endpoint_serves_visible_local_comment(client):
+    _, page = published_page()
+    comment = add_comment(local("alice"), page, "<p>Nice</p>")
+    response = client.get(f"/comments/{comment.id}")
+    assert response.status_code == 200
+    assert response["Content-Type"].startswith("application/activity+json")
+    assert response.json()["type"] == "Note"
+    assert response.json()["id"] == comment.ap_id
+
+
+@pytest.mark.django_db
+def test_comment_endpoint_404_for_pending_comment(client):
+    _, page = published_page(require_reply_approval=True)
+    comment = add_comment(local("alice"), page, "<p>Nice</p>")
+    assert comment.status == CommentStatus.PENDING
+    assert client.get(f"/comments/{comment.id}").status_code == 404
+
+
+@pytest.mark.django_db
+def test_comment_endpoint_404_for_remote_comment(client):
+    _, page = published_page()
+    bob = remote("bob")
+    comment = Comment.objects.create(
+        actor=bob,
+        page=page,
+        ap_id="https://bob.test/notes/1",
+        in_reply_to=page.ap_id,
+        content="<p>x</p>",
+    )
+    assert client.get(f"/comments/{comment.id}").status_code == 404
