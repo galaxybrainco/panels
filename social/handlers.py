@@ -1,3 +1,5 @@
+from django.conf import settings
+
 from actors.models import Actor
 from comics.federation import federation_plan
 from comics.models import Page, PageStatus
@@ -29,6 +31,8 @@ def handle_create(activity):
     in_reply_to = note.get("inReplyTo")
     ap_id = note.get("id")
     if not in_reply_to or not ap_id:
+        return
+    if ap_id.startswith(settings.INSTANCE_URL):
         return
     parent = None
     page = _federatable_page(in_reply_to)

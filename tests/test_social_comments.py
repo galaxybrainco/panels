@@ -30,10 +30,13 @@ def remote(handle="bob"):
 
 
 def published_page(require_reply_approval=False):
+    from uuid import uuid4
+
+    suffix = uuid4().hex[:8]
     owner = get_user_model().objects.create_user(
-        email="owner@example.com", password="x"
+        email=f"owner-{suffix}@example.com", password="x"
     )
-    comic = create_comic(owner, "lunarbaboon", "Lunar Baboon")
+    comic = create_comic(owner, f"comic{suffix}", "Lunar Baboon")
     if require_reply_approval:
         comic.require_reply_approval = True
         comic.save()
@@ -266,3 +269,59 @@ def test_comment_endpoint_404_for_remote_comment(client):
         content="<p>x</p>",
     )
     assert client.get(f"/comments/{comment.id}").status_code == 404
+
+
+@pytest.mark.django_db
+def test_comment_note_id_is_dereferenceable(client):
+    from urllib.parse import urlparse
+
+    _, page = published_page()
+    comment = add_comment(local("alice"), page, "<p>Nice</p>")
+    path = urlparse(comment_to_note(comment)["id"]).path
+    assert client.get(path).status_code == 200
+
+
+@pytest.mark.django_db
+def test_comment_endpoint_404_when_page_gated(client):
+    _, page = published_page()
+    comment = add_comment(local("alice"), page, "<p>Nice</p>")
+    page.audience = Audience.MEMBERS
+    page.save()
+    assert client.get(f"/comments/{comment.id}").status_code == 404
+
+
+@pytest.mark.django_db
+def test_add_comment_rejects_parent_from_another_page():
+    _, page_a = published_page()
+    _, page_b = published_page()
+    parent = add_comment(local("alice"), page_a, "<p>Top</p>")
+    with pytest.raises(ValidationError):
+        add_comment(local("bob"), page_b, "<p>Reply</p>", parent=parent)
+
+
+@pytest.mark.django_db
+def test_comment_to_note_has_addressing():
+    _, page = published_page()
+    comment = add_comment(local("alice"), page, "<p>Nice</p>")
+    note = comment_to_note(comment)
+    assert note["to"] == [page.series.comic.actor.ap_id]
+    assert note["cc"] == [page.series.comic.actor.followers]
+
+
+@pytest.mark.django_db
+def test_inbound_create_ignored_when_note_id_is_local():
+    _, page = published_page()
+    bob = remote("bob")
+    payload = {
+        "id": "https://bob.test/activities/1",
+        "type": "Create",
+        "actor": bob.ap_id,
+        "object": {
+            "id": "http://testserver/comments/spoofed",
+            "type": "Note",
+            "inReplyTo": page.ap_id,
+            "content": "<p>x</p>",
+        },
+    }
+    handlers.dispatch(_inbound("Create", bob, payload))
+    assert not Comment.objects.exists()
