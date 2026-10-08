@@ -1,6 +1,7 @@
 from django.core.exceptions import ValidationError
 from django.db import transaction
 
+from comics.federation import federation_plan
 from comics.models import PageStatus
 from social.models import Boost, CommentStatus, Like
 
@@ -50,6 +51,9 @@ def boost_count(page):
 def _require_visible_comment(comment):
     if comment.status != CommentStatus.VISIBLE or not comment.ap_id:
         raise ValidationError("Only visible comments can be liked or boosted.")
+    page = comment.page
+    if page.status != PageStatus.PUBLISHED or not federation_plan(page).emit:
+        raise ValidationError("Comments on gated pages cannot be liked or boosted.")
     return comment.ap_id
 
 

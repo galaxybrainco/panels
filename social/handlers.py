@@ -23,7 +23,10 @@ def _resolve_reaction_target(object_id):
         ap_id=object_id, status=CommentStatus.VISIBLE
     ).first()
     if comment is not None:
-        return comment.page, comment
+        page = comment.page
+        if page.status == PageStatus.PUBLISHED and federation_plan(page).emit:
+            return page, comment
+        return None, None
     page = _federatable_page(object_id)
     if page is None:
         return None, None

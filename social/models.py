@@ -122,6 +122,7 @@ class Comment(UUIDModel):
     status = models.CharField(
         max_length=16, choices=CommentStatus.choices, default=CommentStatus.VISIBLE
     )
+    hidden_by_ban = models.BooleanField(default=False)
     activity_id = models.CharField(max_length=255, blank=True, default="")
 
     class Meta:

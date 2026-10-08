@@ -373,3 +373,47 @@ def test_inbound_like_on_hidden_comment_is_ignored():
     }
     handlers.dispatch(_inbound("Like", bob, payload))
     assert not Like.objects.exists()
+
+
+@pytest.mark.django_db
+def test_inbound_like_on_comment_of_gated_page_is_ignored():
+    page = published_page()
+    comment = add_comment(create_local_actor("alice"), page, "<p>x</p>")
+    page.audience = Audience.MEMBERS
+    page.save()
+    bob = remote("bob")
+    payload = {
+        "id": "https://bob.test/activities/1",
+        "type": "Like",
+        "actor": bob.ap_id,
+        "object": comment.ap_id,
+    }
+    handlers.dispatch(_inbound("Like", bob, payload))
+    assert not Like.objects.exists()
+
+
+@pytest.mark.django_db
+def test_local_like_comment_on_gated_page_is_rejected():
+    page = published_page()
+    comment = add_comment(create_local_actor("alice"), page, "<p>x</p>")
+    page.audience = Audience.MEMBERS
+    page.save()
+    with pytest.raises(ValidationError):
+        like_comment(create_local_actor("liker"), comment)
+
+
+@pytest.mark.django_db
+def test_inbound_announce_on_hidden_comment_is_ignored():
+    page = published_page()
+    comment = add_comment(create_local_actor("alice"), page, "<p>x</p>")
+    comment.status = CommentStatus.HIDDEN
+    comment.save()
+    bob = remote("bob")
+    payload = {
+        "id": "https://bob.test/activities/1",
+        "type": "Announce",
+        "actor": bob.ap_id,
+        "object": comment.ap_id,
+    }
+    handlers.dispatch(_inbound("Announce", bob, payload))
+    assert not Boost.objects.exists()

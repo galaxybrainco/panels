@@ -35,7 +35,7 @@ def ban_commenter(user, comic, actor):
     ban, _ = CommentBan.objects.get_or_create(comic=comic, actor=actor)
     Comment.objects.filter(
         page__series__comic=comic, actor=actor, status=CommentStatus.VISIBLE
-    ).update(status=CommentStatus.HIDDEN)
+    ).update(status=CommentStatus.HIDDEN, hidden_by_ban=True)
     return ban
 
 
@@ -43,6 +43,9 @@ def ban_commenter(user, comic, actor):
 def unban_commenter(user, comic, actor):
     _require_moderator(user, comic)
     CommentBan.objects.filter(comic=comic, actor=actor).delete()
+    Comment.objects.filter(
+        page__series__comic=comic, actor=actor, hidden_by_ban=True
+    ).update(status=CommentStatus.VISIBLE, hidden_by_ban=False)
 
 
 def is_banned(comic, actor):

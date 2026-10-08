@@ -154,3 +154,97 @@ def test_banned_remote_actor_reply_is_dropped():
     }
     handlers.dispatch(_inbound("Create", bob, payload))
     assert not Comment.objects.exists()
+
+
+@pytest.mark.django_db
+def test_banned_remote_actor_reply_to_comment_is_dropped():
+    owner, comic, page = scene()
+    parent = add_comment(create_local_actor("alice"), page, "<p>top</p>")
+    bob = remote("bob")
+    ban_commenter(owner, comic, bob)
+    payload = {
+        "id": "https://bob.test/activities/1",
+        "type": "Create",
+        "actor": bob.ap_id,
+        "object": {
+            "id": "https://bob.test/notes/1",
+            "type": "Note",
+            "inReplyTo": parent.ap_id,
+            "content": "<p>x</p>",
+        },
+    }
+    handlers.dispatch(_inbound("Create", bob, payload))
+    assert Comment.objects.count() == 1
+
+
+@pytest.mark.django_db
+def test_ban_hides_comments_across_series():
+    owner, comic, page = scene()
+    series2 = create_series(owner, comic, "Second")
+    page2 = create_page(owner, series2)
+    make_media(page2, position=1, alt_text="A panel")
+    from comics.publishing import publish_page
+
+    publish_page(owner, page2)
+    page2.refresh_from_db()
+    mallory = create_local_actor("mallory")
+    first = add_comment(mallory, page, "<p>a</p>")
+    second = add_comment(mallory, page2, "<p>b</p>")
+    ban_commenter(owner, comic, mallory)
+    first.refresh_from_db()
+    second.refresh_from_db()
+    assert first.status == CommentStatus.HIDDEN
+    assert second.status == CommentStatus.HIDDEN
+
+
+@pytest.mark.django_db
+def test_unban_restores_ban_hidden_comments():
+    owner, comic, page = scene()
+    mallory = create_local_actor("mallory")
+    comment = add_comment(mallory, page, "<p>x</p>")
+    ban_commenter(owner, comic, mallory)
+    comment.refresh_from_db()
+    assert comment.status == CommentStatus.HIDDEN
+    unban_commenter(owner, comic, mallory)
+    comment.refresh_from_db()
+    assert comment.status == CommentStatus.VISIBLE
+
+
+@pytest.mark.django_db
+def test_unban_does_not_restore_moderator_hidden_comments():
+    owner, comic, page = scene()
+    comment = add_comment(create_local_actor("alice"), page, "<p>x</p>")
+    hide_comment(owner, comment)
+    mallory = create_local_actor("mallory")
+    ban_commenter(owner, comic, mallory)
+    unban_commenter(owner, comic, mallory)
+    comment.refresh_from_db()
+    assert comment.status == CommentStatus.HIDDEN
+
+
+@pytest.mark.django_db
+def test_moderator_role_can_moderate():
+    owner, comic, page = scene()
+    moderator = get_user_model().objects.create_user(
+        email="mod@example.com", password="x"
+    )
+    ComicRole.objects.create(comic=comic, user=moderator, role=ComicRole.Role.MODERATOR)
+    comment = add_comment(create_local_actor("alice"), page, "<p>x</p>")
+    hide_comment(moderator, comment)
+    comment.refresh_from_db()
+    assert comment.status == CommentStatus.HIDDEN
+
+
+@pytest.mark.django_db
+def test_moderator_of_another_comic_cannot_moderate():
+    owner, comic, page = scene()
+    _, other_comic, _ = scene()
+    outsider = get_user_model().objects.create_user(
+        email="outsider-mod@example.com", password="x"
+    )
+    ComicRole.objects.create(
+        comic=other_comic, user=outsider, role=ComicRole.Role.MODERATOR
+    )
+    comment = add_comment(create_local_actor("alice"), page, "<p>x</p>")
+    with pytest.raises(PermissionDenied):
+        hide_comment(outsider, comment)
