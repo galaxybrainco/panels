@@ -47,6 +47,13 @@ class Like(UUIDModel):
         blank=True,
         related_name="likes",
     )
+    comment = models.ForeignKey(
+        "social.Comment",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="likes",
+    )
     activity_id = models.CharField(max_length=255, blank=True, default="")
 
     class Meta:
@@ -65,6 +72,13 @@ class Boost(UUIDModel):
     object_id = models.URLField()
     page = models.ForeignKey(
         "comics.Page",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="boosts",
+    )
+    comment = models.ForeignKey(
+        "social.Comment",
         on_delete=models.CASCADE,
         null=True,
         blank=True,
@@ -115,3 +129,22 @@ class Comment(UUIDModel):
 
     def __str__(self):
         return f"{self.actor} on {self.page}"
+
+
+class CommentBan(UUIDModel):
+    comic = models.ForeignKey(
+        "comics.Comic", on_delete=models.CASCADE, related_name="comment_bans"
+    )
+    actor = models.ForeignKey(
+        "actors.Actor", on_delete=models.CASCADE, related_name="comment_bans"
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["comic", "actor"], name="unique_comment_ban"
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.actor} banned from {self.comic}"
