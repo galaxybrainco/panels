@@ -9,14 +9,21 @@ from comics.services import create_comic, create_page, create_series
 from federation import handlers
 from federation.activitypub import Audience
 from federation.models import Activity, ActivityDirection
-from social.models import Boost, Follow, FollowStatus, Like
+from social.comments import add_comment
+from social.models import Boost, CommentStatus, Follow, FollowStatus, Like
 from social.reactions import (
     boost,
+    boost_comment,
     boost_count,
+    comment_boost_count,
+    comment_like_count,
     like,
+    like_comment,
     like_count,
     unboost,
+    unboost_comment,
     unlike,
+    unlike_comment,
 )
 from tests.media_support import make_media
 
@@ -307,3 +314,62 @@ def test_inbound_announce_then_undo_by_activity_id():
     }
     handlers.dispatch(_inbound("Undo", bob, undo_payload))
     assert not Boost.objects.exists()
+
+
+@pytest.mark.django_db
+def test_like_comment_stores_link_and_counts():
+    page = published_page()
+    comment = add_comment(create_local_actor("alice"), page, "<p>x</p>")
+    liker = create_local_actor("liker")
+    like_comment(liker, comment)
+    assert comment_like_count(comment) == 1
+    stored = Like.objects.get(actor=liker)
+    assert stored.comment == comment
+    assert stored.page == page
+    unlike_comment(liker, comment)
+    assert comment_like_count(comment) == 0
+
+
+@pytest.mark.django_db
+def test_boost_comment_and_unboost():
+    page = published_page()
+    comment = add_comment(create_local_actor("alice"), page, "<p>x</p>")
+    booster = create_local_actor("booster")
+    boost_comment(booster, comment)
+    assert comment_boost_count(comment) == 1
+    unboost_comment(booster, comment)
+    assert comment_boost_count(comment) == 0
+
+
+@pytest.mark.django_db
+def test_inbound_like_targets_a_comment():
+    page = published_page()
+    comment = add_comment(create_local_actor("alice"), page, "<p>x</p>")
+    bob = remote("bob")
+    payload = {
+        "id": "https://bob.test/activities/1",
+        "type": "Like",
+        "actor": bob.ap_id,
+        "object": comment.ap_id,
+    }
+    handlers.dispatch(_inbound("Like", bob, payload))
+    stored = Like.objects.get(actor=bob)
+    assert stored.comment == comment
+    assert stored.page == page
+
+
+@pytest.mark.django_db
+def test_inbound_like_on_hidden_comment_is_ignored():
+    page = published_page()
+    comment = add_comment(create_local_actor("alice"), page, "<p>x</p>")
+    comment.status = CommentStatus.HIDDEN
+    comment.save()
+    bob = remote("bob")
+    payload = {
+        "id": "https://bob.test/activities/1",
+        "type": "Like",
+        "actor": bob.ap_id,
+        "object": comment.ap_id,
+    }
+    handlers.dispatch(_inbound("Like", bob, payload))
+    assert not Like.objects.exists()
