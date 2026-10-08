@@ -1,7 +1,22 @@
 from actors.models import Actor
+from comics.federation import federation_plan
+from comics.models import Page, PageStatus
 from federation import handlers
 from social import services
-from social.models import Follow, FollowStatus
+from social.models import Boost, Follow, FollowStatus, Like
+
+
+def _federatable_page(object_id):
+    page = Page.objects.filter(ap_id=object_id, status=PageStatus.PUBLISHED).first()
+    if page is None or not federation_plan(page).emit:
+        return None
+    return page
+
+
+def _object_iri(value):
+    if isinstance(value, dict):
+        return value.get("id")
+    return value
 
 
 @handlers.register("Follow")
@@ -27,13 +42,55 @@ def handle_follow(activity):
 def handle_undo(activity):
     obj = activity.payload.get("object")
     if isinstance(obj, dict):
-        if obj.get("type") != "Follow":
-            return
-        Follow.objects.filter(
-            follower=activity.actor, target__ap_id=obj.get("object")
-        ).delete()
-    elif isinstance(obj, str):
+        obj_type = obj.get("type")
+        if obj_type == "Follow":
+            Follow.objects.filter(
+                follower=activity.actor, target__ap_id=_object_iri(obj.get("object"))
+            ).delete()
+        elif obj_type == "Like":
+            Like.objects.filter(
+                actor=activity.actor, object_id=_object_iri(obj.get("object"))
+            ).delete()
+        elif obj_type == "Announce":
+            Boost.objects.filter(
+                actor=activity.actor, object_id=_object_iri(obj.get("object"))
+            ).delete()
+    elif isinstance(obj, str) and obj:
         Follow.objects.filter(follower=activity.actor, activity_id=obj).delete()
+        Like.objects.filter(actor=activity.actor, activity_id=obj).delete()
+        Boost.objects.filter(actor=activity.actor, activity_id=obj).delete()
+
+
+@handlers.register("Like")
+def handle_like(activity):
+    object_id = _object_iri(activity.payload.get("object"))
+    page = _federatable_page(object_id)
+    if page is None:
+        return
+    like_obj, created = Like.objects.get_or_create(
+        actor=activity.actor,
+        object_id=object_id,
+        defaults={"page": page, "activity_id": activity.ap_id},
+    )
+    if not created and not like_obj.activity_id:
+        like_obj.activity_id = activity.ap_id
+        like_obj.save(update_fields=["activity_id", "updated_at"])
+
+
+@handlers.register("Announce")
+def handle_announce(activity):
+    object_id = _object_iri(activity.payload.get("object"))
+    page = _federatable_page(object_id)
+    if page is None:
+        return
+    boost_obj, created = Boost.objects.get_or_create(
+        actor=activity.actor,
+        object_id=object_id,
+        defaults={"page": page, "activity_id": activity.ap_id},
+    )
+    if not created and not boost_obj.activity_id:
+        boost_obj.activity_id = activity.ap_id
+        boost_obj.save(update_fields=["activity_id", "updated_at"])
 
 
 @handlers.register("Accept")
