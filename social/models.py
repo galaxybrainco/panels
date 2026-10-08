@@ -79,3 +79,39 @@ class Boost(UUIDModel):
 
     def __str__(self):
         return f"{self.actor} boosted {self.object_id}"
+
+
+class CommentStatus(models.TextChoices):
+    VISIBLE = "visible", "Visible"
+    PENDING = "pending", "Pending"
+    HIDDEN = "hidden", "Hidden"
+    REPORTED = "reported", "Reported"
+
+
+class Comment(UUIDModel):
+    actor = models.ForeignKey(
+        "actors.Actor", on_delete=models.CASCADE, related_name="comments"
+    )
+    page = models.ForeignKey(
+        "comics.Page", on_delete=models.CASCADE, related_name="comments"
+    )
+    parent = models.ForeignKey(
+        "self",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="replies",
+    )
+    ap_id = models.URLField(unique=True)
+    in_reply_to = models.URLField()
+    content = models.TextField(blank=True, default="")
+    status = models.CharField(
+        max_length=16, choices=CommentStatus.choices, default=CommentStatus.VISIBLE
+    )
+    activity_id = models.CharField(max_length=255, blank=True, default="")
+
+    class Meta:
+        ordering = ["created_at", "id"]
+
+    def __str__(self):
+        return f"{self.actor} on {self.page}"

@@ -44,6 +44,7 @@ class Comic(UUIDModel):
         choices=FederationMode.choices,
         default=FederationMode.FEDERATED,
     )
+    require_reply_approval = models.BooleanField(default=False)
     tags = models.ManyToManyField(Tag, blank=True, related_name="comics")
 
     class Meta:

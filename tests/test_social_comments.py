@@ -1,0 +1,104 @@
+import pytest
+from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
+
+from actors.models import Actor, ActorType
+from actors.services import create_local_actor
+from comics.services import create_comic, create_page, create_series
+from social.comments import add_comment, comment_to_note
+from social.models import CommentStatus
+from social.sanitize import sanitize_html
+from tests.media_support import make_media
+
+
+def local(handle="alice"):
+    return create_local_actor(handle)
+
+
+def remote(handle="bob"):
+    domain = f"{handle}.test"
+    return Actor.objects.create(
+        ap_id=f"https://{domain}/actors/{handle}",
+        type=ActorType.PERSON,
+        handle=handle,
+        domain=domain,
+        inbox=f"https://{domain}/actors/{handle}/inbox",
+    )
+
+
+def published_page(require_reply_approval=False):
+    owner = get_user_model().objects.create_user(
+        email="owner@example.com", password="x"
+    )
+    comic = create_comic(owner, "lunarbaboon", "Lunar Baboon")
+    if require_reply_approval:
+        comic.require_reply_approval = True
+        comic.save()
+    series = create_series(owner, comic, "Main Story")
+    page = create_page(owner, series)
+    make_media(page, position=1, alt_text="A panel")
+    from comics.publishing import publish_page
+
+    publish_page(owner, page)
+    page.refresh_from_db()
+    return comic, page
+
+
+def test_sanitize_html_strips_scripts_and_handlers():
+    assert sanitize_html("<p>hi</p><script>bad()</script>") == "<p>hi</p>"
+    cleaned = sanitize_html('<a href="https://a.test" onclick="x()">l</a>')
+    assert 'href="https://a.test"' in cleaned
+    assert "onclick" not in cleaned
+    assert 'rel="noopener noreferrer"' in cleaned
+
+
+@pytest.mark.django_db
+def test_add_comment_sanitizes_and_links_to_page():
+    _, page = published_page()
+    comment = add_comment(local("alice"), page, "<p>Nice</p><script>x()</script>")
+    assert comment.content == "<p>Nice</p>"
+    assert comment.in_reply_to == page.ap_id
+    assert comment.ap_id.startswith("http://testserver/comments/")
+    assert comment.status == CommentStatus.VISIBLE
+
+
+@pytest.mark.django_db
+def test_add_comment_reply_links_parent():
+    _, page = published_page()
+    top = add_comment(local("alice"), page, "<p>Top</p>")
+    reply = add_comment(local("bob"), page, "<p>Reply</p>", parent=top)
+    assert reply.parent == top
+    assert reply.in_reply_to == top.ap_id
+    assert reply.page == page
+
+
+@pytest.mark.django_db
+def test_add_comment_pending_when_comic_requires_approval():
+    _, page = published_page(require_reply_approval=True)
+    comment = add_comment(local("alice"), page, "<p>x</p>")
+    assert comment.status == CommentStatus.PENDING
+
+
+@pytest.mark.django_db
+def test_add_comment_requires_a_published_page():
+    owner = get_user_model().objects.create_user(
+        email="owner@example.com", password="x"
+    )
+    comic = create_comic(owner, "lunarbaboon", "Lunar Baboon")
+    series = create_series(owner, comic, "Main Story")
+    draft = create_page(owner, series)
+    with pytest.raises(ValidationError):
+        add_comment(local("alice"), draft, "<p>x</p>")
+
+
+@pytest.mark.django_db
+def test_comment_to_note_shape():
+    _, page = published_page()
+    comment = add_comment(local("alice"), page, "<p>Nice</p>")
+    note = comment_to_note(comment)
+    assert note["type"] == "Note"
+    assert note["id"] == comment.ap_id
+    assert note["attributedTo"] == comment.actor.ap_id
+    assert note["inReplyTo"] == page.ap_id
+    assert note["content"] == "<p>Nice</p>"
+    assert "published" in note
