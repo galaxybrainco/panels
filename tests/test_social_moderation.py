@@ -2,14 +2,16 @@ from uuid import uuid4
 
 import pytest
 from django.contrib.auth import get_user_model
-from django.core.exceptions import PermissionDenied
+from django.core.exceptions import PermissionDenied, ValidationError
 
 from actors.models import Actor, ActorType
 from actors.services import create_local_actor
 from comics.models import ComicRole
 from comics.services import create_comic, create_page, create_series
+from federation import handlers
+from federation.models import Activity, ActivityDirection
 from social.comments import add_comment
-from social.models import CommentBan, CommentStatus
+from social.models import Comment, CommentBan, CommentStatus
 from social.moderation import (
     approve_comment,
     ban_commenter,
@@ -113,3 +115,42 @@ def test_unban_removes_ban():
     ban_commenter(owner, comic, mallory)
     unban_commenter(owner, comic, mallory)
     assert is_banned(comic, mallory) is False
+
+
+def _inbound(activity_type, actor, payload):
+    return Activity.objects.create(
+        ap_id=payload["id"],
+        type=activity_type,
+        actor=actor,
+        direction=ActivityDirection.INBOUND,
+        payload=payload,
+    )
+
+
+@pytest.mark.django_db
+def test_banned_local_actor_cannot_comment():
+    owner, comic, page = scene()
+    mallory = create_local_actor("mallory")
+    ban_commenter(owner, comic, mallory)
+    with pytest.raises(ValidationError):
+        add_comment(mallory, page, "<p>x</p>")
+
+
+@pytest.mark.django_db
+def test_banned_remote_actor_reply_is_dropped():
+    owner, comic, page = scene()
+    bob = remote("bob")
+    ban_commenter(owner, comic, bob)
+    payload = {
+        "id": "https://bob.test/activities/1",
+        "type": "Create",
+        "actor": bob.ap_id,
+        "object": {
+            "id": "https://bob.test/notes/1",
+            "type": "Note",
+            "inReplyTo": page.ap_id,
+            "content": "<p>x</p>",
+        },
+    }
+    handlers.dispatch(_inbound("Create", bob, payload))
+    assert not Comment.objects.exists()

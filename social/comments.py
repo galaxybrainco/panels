@@ -5,6 +5,7 @@ from django.db import transaction
 from comics.models import PageStatus
 from federation.activitypub import activity_context
 from social.models import Comment, CommentStatus
+from social.moderation import is_banned
 from social.sanitize import sanitize_html
 
 
@@ -18,6 +19,8 @@ def comment_status_for(page):
 def add_comment(actor, page, content, parent=None):
     if page.status != PageStatus.PUBLISHED or not page.ap_id:
         raise ValidationError("Comments require a published page.")
+    if is_banned(page.series.comic, actor):
+        raise ValidationError("You are banned from replying to this comic.")
     if parent is not None and parent.page_id != page.id:
         raise ValidationError("The parent comment belongs to a different page.")
     comment = Comment(

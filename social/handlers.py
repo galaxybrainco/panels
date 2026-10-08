@@ -7,6 +7,7 @@ from federation import handlers
 from social import services
 from social.comments import comment_status_for
 from social.models import Boost, Comment, Follow, FollowStatus, Like
+from social.moderation import is_banned
 from social.sanitize import sanitize_html
 
 
@@ -43,6 +44,8 @@ def handle_create(activity):
         page = parent.page
         if page.status != PageStatus.PUBLISHED or not federation_plan(page).emit:
             return
+    if is_banned(page.series.comic, activity.actor):
+        return
     if Comment.objects.filter(ap_id=ap_id).exists():
         return
     Comment.objects.create(
