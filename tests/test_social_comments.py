@@ -5,8 +5,11 @@ from django.core.exceptions import ValidationError
 from actors.models import Actor, ActorType
 from actors.services import create_local_actor
 from comics.services import create_comic, create_page, create_series
+from federation import handlers
+from federation.activitypub import Audience
+from federation.models import Activity, ActivityDirection
 from social.comments import add_comment, comment_to_note
-from social.models import CommentStatus
+from social.models import Comment, CommentStatus
 from social.sanitize import sanitize_html
 from tests.media_support import make_media
 
@@ -102,3 +105,131 @@ def test_comment_to_note_shape():
     assert note["inReplyTo"] == page.ap_id
     assert note["content"] == "<p>Nice</p>"
     assert "published" in note
+
+
+def _inbound(activity_type, actor, payload):
+    return Activity.objects.create(
+        ap_id=payload["id"],
+        type=activity_type,
+        actor=actor,
+        direction=ActivityDirection.INBOUND,
+        payload=payload,
+    )
+
+
+@pytest.mark.django_db
+def test_inbound_create_reply_to_page():
+    _, page = published_page()
+    bob = remote("bob")
+    payload = {
+        "id": "https://bob.test/activities/1",
+        "type": "Create",
+        "actor": bob.ap_id,
+        "object": {
+            "id": "https://bob.test/notes/1",
+            "type": "Note",
+            "inReplyTo": page.ap_id,
+            "content": "<p>Great page</p><script>x()</script>",
+        },
+    }
+    handlers.dispatch(_inbound("Create", bob, payload))
+    comment = Comment.objects.get(ap_id="https://bob.test/notes/1")
+    assert comment.page == page
+    assert comment.parent is None
+    assert comment.content == "<p>Great page</p>"
+    assert comment.status == CommentStatus.VISIBLE
+
+
+@pytest.mark.django_db
+def test_inbound_create_reply_to_comment_links_parent():
+    _, page = published_page()
+    parent = add_comment(local("alice"), page, "<p>Top</p>")
+    bob = remote("bob")
+    payload = {
+        "id": "https://bob.test/activities/1",
+        "type": "Create",
+        "actor": bob.ap_id,
+        "object": {
+            "id": "https://bob.test/notes/1",
+            "type": "Note",
+            "inReplyTo": parent.ap_id,
+            "content": "<p>Reply</p>",
+        },
+    }
+    handlers.dispatch(_inbound("Create", bob, payload))
+    comment = Comment.objects.get(ap_id="https://bob.test/notes/1")
+    assert comment.parent == parent
+    assert comment.page == page
+
+
+@pytest.mark.django_db
+def test_inbound_create_ignored_for_foreign_in_reply_to():
+    bob = remote("bob")
+    payload = {
+        "id": "https://bob.test/activities/1",
+        "type": "Create",
+        "actor": bob.ap_id,
+        "object": {
+            "id": "https://bob.test/notes/1",
+            "type": "Note",
+            "inReplyTo": "https://elsewhere.test/notes/nope",
+            "content": "<p>x</p>",
+        },
+    }
+    handlers.dispatch(_inbound("Create", bob, payload))
+    assert not Comment.objects.exists()
+
+
+@pytest.mark.django_db
+def test_inbound_create_ignored_for_members_page():
+    _, page = published_page()
+    page.audience = Audience.MEMBERS
+    page.save()
+    bob = remote("bob")
+    payload = {
+        "id": "https://bob.test/activities/1",
+        "type": "Create",
+        "actor": bob.ap_id,
+        "object": {
+            "id": "https://bob.test/notes/1",
+            "type": "Note",
+            "inReplyTo": page.ap_id,
+            "content": "<p>x</p>",
+        },
+    }
+    handlers.dispatch(_inbound("Create", bob, payload))
+    assert not Comment.objects.exists()
+
+
+@pytest.mark.django_db
+def test_inbound_create_ignored_for_non_note():
+    _, page = published_page()
+    bob = remote("bob")
+    payload = {
+        "id": "https://bob.test/activities/1",
+        "type": "Create",
+        "actor": bob.ap_id,
+        "object": {"id": page.ap_id, "type": "Article", "inReplyTo": page.ap_id},
+    }
+    handlers.dispatch(_inbound("Create", bob, payload))
+    assert not Comment.objects.exists()
+
+
+@pytest.mark.django_db
+def test_inbound_create_is_idempotent():
+    _, page = published_page()
+    bob = remote("bob")
+    first = {
+        "id": "https://bob.test/activities/1",
+        "type": "Create",
+        "actor": bob.ap_id,
+        "object": {
+            "id": "https://bob.test/notes/1",
+            "type": "Note",
+            "inReplyTo": page.ap_id,
+            "content": "<p>x</p>",
+        },
+    }
+    handlers.dispatch(_inbound("Create", bob, first))
+    handlers.dispatch(_inbound("Create", bob, {**first, "id": "https://bob.test/a/2"}))
+    assert Comment.objects.count() == 1
