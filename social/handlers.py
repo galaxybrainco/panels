@@ -1,9 +1,13 @@
+from django.conf import settings
+
 from actors.models import Actor
 from comics.federation import federation_plan
 from comics.models import Page, PageStatus
 from federation import handlers
 from social import services
-from social.models import Boost, Follow, FollowStatus, Like
+from social.comments import comment_status_for
+from social.models import Boost, Comment, Follow, FollowStatus, Like
+from social.sanitize import sanitize_html
 
 
 def _federatable_page(object_id):
@@ -17,6 +21,40 @@ def _object_iri(value):
     if isinstance(value, dict):
         return value.get("id")
     return value
+
+
+@handlers.register("Create")
+def handle_create(activity):
+    note = activity.payload.get("object")
+    if not isinstance(note, dict) or note.get("type") != "Note":
+        return
+    in_reply_to = note.get("inReplyTo")
+    ap_id = note.get("id")
+    if not in_reply_to or not ap_id:
+        return
+    if ap_id.startswith(settings.INSTANCE_URL):
+        return
+    parent = None
+    page = _federatable_page(in_reply_to)
+    if page is None:
+        parent = Comment.objects.filter(ap_id=in_reply_to).first()
+        if parent is None:
+            return
+        page = parent.page
+        if page.status != PageStatus.PUBLISHED or not federation_plan(page).emit:
+            return
+    if Comment.objects.filter(ap_id=ap_id).exists():
+        return
+    Comment.objects.create(
+        actor=activity.actor,
+        page=page,
+        parent=parent,
+        ap_id=ap_id,
+        in_reply_to=in_reply_to,
+        content=sanitize_html(note.get("content", "")),
+        status=comment_status_for(page),
+        activity_id=activity.ap_id,
+    )
 
 
 @handlers.register("Follow")
