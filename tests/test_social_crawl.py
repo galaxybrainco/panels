@@ -5,6 +5,7 @@ from django.contrib.auth import get_user_model
 
 from actors.models import Actor, ActorType
 from comics.services import create_comic, create_page, create_series
+from social import crawl
 from social.comments import store_inbound_reply
 from social.models import Comment
 from tests.media_support import make_media
@@ -83,3 +84,140 @@ def test_store_inbound_reply_rejects_local_note_id():
     bob = remote("bob")
     note = _note("http://testserver/comments/spoof", bob, page.ap_id)
     assert store_inbound_reply(note, bob) is None
+
+
+@pytest.mark.django_db
+def test_store_reply_resolves_author_and_stores(monkeypatch):
+    _, _, page = scene()
+    bob = remote("bob")
+    note = _note("https://bob.test/notes/1", bob, page.ap_id)
+    monkeypatch.setattr(
+        "social.crawl.fetch_object", lambda url: note if url == note["id"] else None
+    )
+    comment = crawl.store_reply(note)
+    assert comment is not None
+    assert comment.actor == bob
+
+
+@pytest.mark.django_db
+def test_store_reply_drops_banned_author():
+    owner, comic, page = scene()
+    from social.moderation import ban_commenter
+
+    bob = remote("bob")
+    ban_commenter(owner, comic, bob)
+    note = _note("https://bob.test/notes/1", bob, page.ap_id)
+    assert crawl.store_reply(note) is None
+
+
+@pytest.mark.django_db
+def test_store_reply_drops_unresolvable_author(monkeypatch):
+    _, _, page = scene()
+    unknown = remote("ghost")
+    note = _note("https://bob.test/notes/1", unknown, page.ap_id)
+    monkeypatch.setattr("social.crawl.resolve_author", lambda note: None)
+    assert crawl.store_reply(note) is None
+
+
+@pytest.mark.django_db
+def test_crawl_comment_stores_descendants(monkeypatch):
+    _, _, page = scene()
+    bob, carol = remote("bob"), remote("carol")
+    parent = Comment.objects.create(
+        actor=bob,
+        page=page,
+        ap_id="https://bob.test/notes/1",
+        in_reply_to=page.ap_id,
+        content="<p>top</p>",
+    )
+    child = _note("https://carol.test/notes/2", carol, parent.ap_id)
+    parent_note = {
+        "id": parent.ap_id,
+        "type": "Note",
+        "attributedTo": bob.ap_id,
+        "inReplyTo": page.ap_id,
+        "content": "<p>top</p>",
+        "replies": {"type": "Collection", "orderedItems": [child]},
+    }
+    documents = {parent.ap_id: parent_note, child["id"]: child}
+    monkeypatch.setattr("social.crawl.fetch_object", lambda url: documents.get(url))
+
+    stored = crawl.crawl_comment(parent)
+
+    assert stored == 1
+    assert Comment.objects.filter(ap_id=child["id"], parent=parent).exists()
+    parent.refresh_from_db()
+    assert parent.crawled_at is not None
+
+
+@pytest.mark.django_db
+def test_crawl_comment_backfills_missing_ancestor(monkeypatch):
+    _, _, page = scene()
+    bob, carol = remote("bob"), remote("carol")
+    stored_reply = Comment.objects.create(
+        actor=bob,
+        page=page,
+        ap_id="https://bob.test/notes/1",
+        in_reply_to="https://carol.test/notes/0",
+        content="<p>reply</p>",
+    )
+    ancestor = _note("https://carol.test/notes/0", carol, page.ap_id)
+    documents = {
+        stored_reply.ap_id: {
+            "id": stored_reply.ap_id,
+            "type": "Note",
+            "attributedTo": bob.ap_id,
+            "inReplyTo": ancestor["id"],
+            "content": "<p>reply</p>",
+        },
+        ancestor["id"]: ancestor,
+    }
+    monkeypatch.setattr("social.crawl.fetch_object", lambda url: documents.get(url))
+
+    crawl.crawl_comment(stored_reply)
+
+    assert Comment.objects.filter(ap_id=ancestor["id"], page=page).exists()
+
+
+@pytest.mark.django_db
+def test_crawl_comment_respects_depth(monkeypatch):
+    _, _, page = scene()
+    bob = remote("bob")
+    parent = Comment.objects.create(
+        actor=bob,
+        page=page,
+        ap_id="https://bob.test/notes/1",
+        in_reply_to=page.ap_id,
+        content="<p>top</p>",
+    )
+    documents = {}
+    chain = [parent.ap_id]
+    for index in range(4):
+        ap_id = f"https://bob.test/notes/child-{index}"
+        in_reply_to = chain[-1]
+        author = remote(f"author{index}")
+        documents[in_reply_to] = {
+            "id": in_reply_to,
+            "type": "Note",
+            "attributedTo": bob.ap_id,
+            "inReplyTo": page.ap_id if in_reply_to == parent.ap_id else "x",
+            "content": "<p>x</p>",
+            "replies": {
+                "type": "Collection",
+                "orderedItems": [_note(ap_id, author, in_reply_to)],
+            },
+        }
+        chain.append(ap_id)
+        documents[ap_id] = {
+            "id": ap_id,
+            "type": "Note",
+            "attributedTo": author.ap_id,
+            "inReplyTo": in_reply_to,
+            "content": "<p>x</p>",
+        }
+    monkeypatch.setattr("social.crawl.fetch_object", lambda url: documents.get(url))
+
+    crawl.crawl_comment(parent)
+
+    assert Comment.objects.filter(ap_id="https://bob.test/notes/child-1").exists()
+    assert not Comment.objects.filter(ap_id="https://bob.test/notes/child-2").exists()
