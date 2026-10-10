@@ -6,7 +6,8 @@ from comics.models import Page, PageStatus
 from federation import handlers
 from social import services
 from social.comments import comment_status_for
-from social.models import Boost, Comment, Follow, FollowStatus, Like
+from social.models import Boost, Comment, CommentStatus, Follow, FollowStatus, Like
+from social.moderation import is_banned
 from social.sanitize import sanitize_html
 
 
@@ -15,6 +16,21 @@ def _federatable_page(object_id):
     if page is None or not federation_plan(page).emit:
         return None
     return page
+
+
+def _resolve_reaction_target(object_id):
+    comment = Comment.objects.filter(
+        ap_id=object_id, status=CommentStatus.VISIBLE
+    ).first()
+    if comment is not None:
+        page = comment.page
+        if page.status == PageStatus.PUBLISHED and federation_plan(page).emit:
+            return page, comment
+        return None, None
+    page = _federatable_page(object_id)
+    if page is None:
+        return None, None
+    return page, None
 
 
 def _object_iri(value):
@@ -43,6 +59,8 @@ def handle_create(activity):
         page = parent.page
         if page.status != PageStatus.PUBLISHED or not federation_plan(page).emit:
             return
+    if is_banned(page.series.comic, activity.actor):
+        return
     if Comment.objects.filter(ap_id=ap_id).exists():
         return
     Comment.objects.create(
@@ -102,13 +120,13 @@ def handle_undo(activity):
 @handlers.register("Like")
 def handle_like(activity):
     object_id = _object_iri(activity.payload.get("object"))
-    page = _federatable_page(object_id)
+    page, comment = _resolve_reaction_target(object_id)
     if page is None:
         return
     like_obj, created = Like.objects.get_or_create(
         actor=activity.actor,
         object_id=object_id,
-        defaults={"page": page, "activity_id": activity.ap_id},
+        defaults={"page": page, "comment": comment, "activity_id": activity.ap_id},
     )
     if not created and not like_obj.activity_id:
         like_obj.activity_id = activity.ap_id
@@ -118,13 +136,13 @@ def handle_like(activity):
 @handlers.register("Announce")
 def handle_announce(activity):
     object_id = _object_iri(activity.payload.get("object"))
-    page = _federatable_page(object_id)
+    page, comment = _resolve_reaction_target(object_id)
     if page is None:
         return
     boost_obj, created = Boost.objects.get_or_create(
         actor=activity.actor,
         object_id=object_id,
-        defaults={"page": page, "activity_id": activity.ap_id},
+        defaults={"page": page, "comment": comment, "activity_id": activity.ap_id},
     )
     if not created and not boost_obj.activity_id:
         boost_obj.activity_id = activity.ap_id
