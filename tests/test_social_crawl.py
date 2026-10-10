@@ -2,12 +2,17 @@ from uuid import uuid4
 
 import pytest
 from django.contrib.auth import get_user_model
+from django.core.management import call_command
+from django_tasks_db.models import DBTaskResult
 
 from actors.models import Actor, ActorType
 from comics.services import create_comic, create_page, create_series
+from federation import handlers
+from federation.models import Activity, ActivityDirection
 from social import crawl
 from social.comments import store_inbound_reply
 from social.models import Comment
+from social.tasks import crawl_comment_thread
 from tests.media_support import make_media
 
 
@@ -221,3 +226,62 @@ def test_crawl_comment_respects_depth(monkeypatch):
 
     assert Comment.objects.filter(ap_id="https://bob.test/notes/child-1").exists()
     assert not Comment.objects.filter(ap_id="https://bob.test/notes/child-2").exists()
+
+
+@pytest.mark.django_db
+def test_inbound_create_enqueues_a_crawl():
+    _, _, page = scene()
+    bob = remote("bob")
+    payload = {
+        "id": "https://bob.test/activities/1",
+        "type": "Create",
+        "actor": bob.ap_id,
+        "object": _note("https://bob.test/notes/1", bob, page.ap_id),
+    }
+    activity = Activity.objects.create(
+        ap_id=payload["id"],
+        type="Create",
+        actor=bob,
+        direction=ActivityDirection.INBOUND,
+        payload=payload,
+    )
+    handlers.dispatch(activity)
+    assert Comment.objects.count() == 1
+    assert DBTaskResult.objects.filter(
+        task_path__contains="crawl_comment_thread"
+    ).exists()
+
+
+@pytest.mark.django_db
+def test_crawl_command_enqueues_stale_comments():
+    _, _, page = scene()
+    bob = remote("bob")
+    Comment.objects.create(
+        actor=bob,
+        page=page,
+        ap_id="https://bob.test/notes/1",
+        in_reply_to=page.ap_id,
+        content="<p>x</p>",
+    )
+    call_command("crawl_comment_threads")
+    assert (
+        DBTaskResult.objects.filter(task_path__contains="crawl_comment_thread").count()
+        == 1
+    )
+
+
+@pytest.mark.django_db
+def test_crawl_task_runs(monkeypatch):
+    _, _, page = scene()
+    bob = remote("bob")
+    comment = Comment.objects.create(
+        actor=bob,
+        page=page,
+        ap_id="https://bob.test/notes/1",
+        in_reply_to=page.ap_id,
+        content="<p>x</p>",
+    )
+    monkeypatch.setattr("social.crawl.fetch_object", lambda url: None)
+    crawl_comment_thread.func(str(comment.id))
+    comment.refresh_from_db()
+    assert comment.crawled_at is not None

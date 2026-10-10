@@ -22,7 +22,11 @@ def _resolve_reaction_target(object_id):
 
 @handlers.register("Create")
 def handle_create(activity):
-    store_inbound_reply(activity.payload.get("object"), activity.actor)
+    from social.tasks import crawl_comment_thread
+
+    comment = store_inbound_reply(activity.payload.get("object"), activity.actor)
+    if comment is not None:
+        crawl_comment_thread.enqueue(str(comment.id))
 
 
 @handlers.register("Follow")
