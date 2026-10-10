@@ -24,7 +24,9 @@ def _resolve_reaction_target(object_id):
 def handle_create(activity):
     from social.tasks import crawl_comment_thread
 
-    comment = store_inbound_reply(activity.payload.get("object"), activity.actor)
+    comment = store_inbound_reply(
+        activity.payload.get("object"), activity.actor, activity_id=activity.ap_id
+    )
     if comment is not None:
         crawl_comment_thread.enqueue(str(comment.id))
 

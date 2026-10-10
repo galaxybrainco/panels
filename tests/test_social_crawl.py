@@ -285,3 +285,137 @@ def test_crawl_task_runs(monkeypatch):
     crawl_comment_thread.func(str(comment.id))
     comment.refresh_from_db()
     assert comment.crawled_at is not None
+
+
+@pytest.mark.django_db
+def test_crawl_backfills_multi_level_ancestor_chain(monkeypatch):
+    _, _, page = scene()
+    bob, carol, dave = remote("bob"), remote("carol"), remote("dave")
+    reply = Comment.objects.create(
+        actor=bob,
+        page=page,
+        ap_id="https://bob.test/notes/1",
+        in_reply_to="https://carol.test/notes/A",
+        content="<p>r</p>",
+    )
+    note_a = _note("https://carol.test/notes/A", carol, "https://dave.test/notes/B")
+    note_b = _note("https://dave.test/notes/B", dave, page.ap_id)
+    docs = {
+        reply.ap_id: {
+            "id": reply.ap_id,
+            "type": "Note",
+            "attributedTo": bob.ap_id,
+            "inReplyTo": note_a["id"],
+            "content": "<p>r</p>",
+        },
+        note_a["id"]: note_a,
+        note_b["id"]: note_b,
+    }
+    monkeypatch.setattr("social.crawl.fetch_object", lambda url: docs.get(url))
+
+    crawl.crawl_comment(reply)
+
+    assert Comment.objects.filter(ap_id=note_b["id"], page=page).exists()
+    assert Comment.objects.filter(
+        ap_id=note_a["id"], parent__ap_id=note_b["id"]
+    ).exists()
+
+
+@pytest.mark.django_db
+def test_inbound_create_records_activity_id():
+    _, _, page = scene()
+    bob = remote("bob")
+    payload = {
+        "id": "https://bob.test/activities/1",
+        "type": "Create",
+        "actor": bob.ap_id,
+        "object": _note("https://bob.test/notes/1", bob, page.ap_id),
+    }
+    activity = Activity.objects.create(
+        ap_id=payload["id"],
+        type="Create",
+        actor=bob,
+        direction=ActivityDirection.INBOUND,
+        payload=payload,
+    )
+    handlers.dispatch(activity)
+    assert Comment.objects.get(ap_id="https://bob.test/notes/1").activity_id == (
+        "https://bob.test/activities/1"
+    )
+
+
+@pytest.mark.django_db
+def test_resolve_author_handles_list_attributed_to():
+    bob = remote("bob")
+    note = {"attributedTo": [bob.ap_id]}
+    assert crawl.resolve_author(note) == bob
+
+
+@pytest.mark.django_db
+def test_crawl_follows_paged_replies_collection(monkeypatch):
+    _, _, page = scene()
+    bob, carol = remote("bob"), remote("carol")
+    parent = Comment.objects.create(
+        actor=bob,
+        page=page,
+        ap_id="https://bob.test/notes/1",
+        in_reply_to=page.ap_id,
+        content="<p>top</p>",
+    )
+    child = _note("https://carol.test/notes/2", carol, parent.ap_id)
+    page_url = "https://bob.test/collections/1?page=1"
+    docs = {
+        parent.ap_id: {
+            "id": parent.ap_id,
+            "type": "Note",
+            "attributedTo": bob.ap_id,
+            "inReplyTo": page.ap_id,
+            "content": "<p>top</p>",
+            "replies": {"type": "OrderedCollection", "first": page_url},
+        },
+        page_url: {"type": "OrderedCollectionPage", "orderedItems": [child]},
+        child["id"]: child,
+    }
+    monkeypatch.setattr("social.crawl.fetch_object", lambda url: docs.get(url))
+
+    crawl.crawl_comment(parent)
+
+    assert Comment.objects.filter(ap_id=child["id"]).exists()
+
+
+@pytest.mark.django_db
+def test_crawl_budget_bounds_fetches(monkeypatch):
+    _, _, page = scene()
+    bob = remote("bob")
+    parent = Comment.objects.create(
+        actor=bob,
+        page=page,
+        ap_id="https://bob.test/notes/1",
+        in_reply_to=page.ap_id,
+        content="<p>top</p>",
+    )
+    children = [
+        _note(f"https://bob.test/notes/c{i}", bob, parent.ap_id) for i in range(50)
+    ]
+    docs = {
+        parent.ap_id: {
+            "id": parent.ap_id,
+            "type": "Note",
+            "attributedTo": bob.ap_id,
+            "inReplyTo": page.ap_id,
+            "content": "<p>top</p>",
+            "replies": {"type": "Collection", "orderedItems": children},
+        },
+        **{child["id"]: child for child in children},
+    }
+    calls = {"n": 0}
+
+    def fake(url):
+        calls["n"] += 1
+        return docs.get(url)
+
+    monkeypatch.setattr("social.crawl.fetch_object", fake)
+
+    crawl.crawl_comment(parent)
+
+    assert calls["n"] <= crawl.MAX_NOTES + 2

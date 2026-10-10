@@ -66,7 +66,7 @@ def reply_target(value):
     return value
 
 
-def store_inbound_reply(note, actor):
+def store_inbound_reply(note, actor, activity_id=""):
     if not isinstance(note, dict) or note.get("type") != "Note":
         return None
     ap_id = note.get("id")
@@ -96,4 +96,5 @@ def store_inbound_reply(note, actor):
         in_reply_to=in_reply_to,
         content=sanitize_html(note.get("content", "")),
         status=comment_status_for(page),
+        activity_id=activity_id,
     )
