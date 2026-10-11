@@ -55,6 +55,10 @@ def follow(local_actor, target):
             "Follow", local_actor, target.ap_id, activity_id=activity_id
         )
         fan_out(payload, [_target_inbox(target)], local_actor)
+    if created:
+        from social.notifications import notify_follow
+
+        notify_follow(follow_obj)
     return follow_obj
 
 

@@ -8,6 +8,7 @@ from actors.services import create_local_actor
 from comics.services import create_comic, create_page, create_series
 from social.comments import add_comment
 from social.models import (
+    Comment,
     Follow,
     FollowStatus,
     Notification,
@@ -15,7 +16,7 @@ from social.models import (
 )
 from social.notifications import mark_all_read, mark_read, notify
 from social.reactions import like, like_comment
-from social.services import accept_follow
+from social.services import accept_follow, follow
 from tests.media_support import make_media
 
 
@@ -184,4 +185,51 @@ def test_like_on_comment_notifies_comment_author():
     like_comment(liker, comment)
     assert Notification.objects.filter(
         recipient=author, type=NotificationType.LIKE, comment=comment
+    ).exists()
+
+
+@pytest.mark.django_db
+def test_local_follow_notifies_comic_owner():
+    owner, comic, page = scene()
+    follower = create_local_actor(f"fan{uuid4().hex[:6]}", user=user())
+    follow(follower, comic.actor)
+    assert (
+        Notification.objects.filter(
+            recipient=owner, type=NotificationType.FOLLOW, actor=follower
+        ).count()
+        == 1
+    )
+
+
+@pytest.mark.django_db
+def test_nested_reply_to_remote_parent_does_not_notify_publisher():
+    owner, comic, page = scene()
+    remote_parent = Comment.objects.create(
+        actor=remote("remoteauthor"),
+        page=page,
+        ap_id="https://remoteauthor.test/notes/1",
+        in_reply_to=page.ap_id,
+        content="<p>top</p>",
+    )
+    replier = create_local_actor(f"replier{uuid4().hex[:6]}", user=user())
+    add_comment(replier, page, "<p>reply</p>", parent=remote_parent)
+    assert not Notification.objects.filter(
+        recipient=owner, type=NotificationType.REPLY
+    ).exists()
+
+
+@pytest.mark.django_db
+def test_like_on_remote_authored_comment_does_not_notify_publisher():
+    owner, comic, page = scene()
+    remote_comment = Comment.objects.create(
+        actor=remote("remoteauthor"),
+        page=page,
+        ap_id="https://remoteauthor.test/notes/1",
+        in_reply_to=page.ap_id,
+        content="<p>x</p>",
+    )
+    liker = create_local_actor(f"liker{uuid4().hex[:6]}", user=user())
+    like_comment(liker, remote_comment)
+    assert not Notification.objects.filter(
+        recipient=owner, type=NotificationType.LIKE
     ).exists()

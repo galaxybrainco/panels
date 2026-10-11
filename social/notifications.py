@@ -69,10 +69,9 @@ def notify_follow(follow):
 
 
 def notify_reply(comment):
-    recipient = None
     if comment.parent is not None:
         recipient = _actor_user(comment.parent.actor)
-    if recipient is None:
+    else:
         recipient = comment.page.published_by
     return notify(
         recipient,
@@ -85,9 +84,7 @@ def notify_reply(comment):
 
 def _reaction_recipient(reaction):
     if reaction.comment_id:
-        recipient = _actor_user(reaction.comment.actor)
-        if recipient is not None:
-            return recipient
+        return _actor_user(reaction.comment.actor)
     if reaction.page_id:
         return reaction.page.published_by
     return None
