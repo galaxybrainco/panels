@@ -56,8 +56,10 @@ def publish(page, *, published_by=None, when=None, require_scheduled=False):
         ]
     )
     from comics import federation
+    from social.notifications import notify_new_page
 
     federation.emit_page_activity(locked, "Create")
+    notify_new_page(locked)
     return locked
 
 

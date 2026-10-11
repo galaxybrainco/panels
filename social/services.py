@@ -91,4 +91,7 @@ def accept_follow(follow_obj):
             activity_id=f"{follow_obj.target.ap_id}#accepts/{uuid4()}",
         )
         fan_out(accept, [_target_inbox(follow_obj.follower)], follow_obj.target)
+    from social.notifications import notify_follow
+
+    notify_follow(follow_obj)
     return follow_obj
