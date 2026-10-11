@@ -149,7 +149,7 @@ STORAGES = {
         endpoint_url=env("MEDIA_STORAGE_ENDPOINT_URL", default=""),
         access_key=env("MEDIA_STORAGE_ACCESS_KEY", default=""),
         secret_key=env("MEDIA_STORAGE_SECRET_KEY", default=""),
-        region=env("MEDIA_STORAGE_REGION", default="auto"),
+        region=env("MEDIA_STORAGE_REGION", default="de"),
         custom_domain=env("MEDIA_STORAGE_CUSTOM_DOMAIN", default=""),
     ),
     "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},

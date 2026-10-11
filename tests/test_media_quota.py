@@ -58,6 +58,17 @@ def test_add_media_blocked_when_over_quota(settings):
     settings.MEDIA_STORAGE_QUOTA_BYTES = 1
     with pytest.raises(ValidationError):
         add_media(owner, page, upload())
+    from pathlib import Path
+
     from media.models import Media
 
     assert Media.objects.count() == 0
+    assert not any(path.is_file() for path in Path(settings.MEDIA_ROOT).rglob("*"))
+
+
+@pytest.mark.django_db
+def test_quota_boundary_allows_exact_fit(settings):
+    owner, comic, page = scene()
+    size = len(upload().read())
+    settings.MEDIA_STORAGE_QUOTA_BYTES = size
+    ensure_within_quota(comic, size)
