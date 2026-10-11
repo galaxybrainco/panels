@@ -14,9 +14,13 @@ def _require_ap_id(page):
 
 @transaction.atomic
 def like(actor, page):
-    like_obj, _ = Like.objects.get_or_create(
+    like_obj, created = Like.objects.get_or_create(
         actor=actor, object_id=_require_ap_id(page), defaults={"page": page}
     )
+    if created:
+        from social.notifications import notify_like
+
+        notify_like(like_obj)
     return like_obj
 
 
@@ -28,9 +32,13 @@ def unlike(actor, page):
 
 @transaction.atomic
 def boost(actor, page):
-    boost_obj, _ = Boost.objects.get_or_create(
+    boost_obj, created = Boost.objects.get_or_create(
         actor=actor, object_id=_require_ap_id(page), defaults={"page": page}
     )
+    if created:
+        from social.notifications import notify_boost
+
+        notify_boost(boost_obj)
     return boost_obj
 
 
@@ -59,11 +67,15 @@ def _require_visible_comment(comment):
 
 @transaction.atomic
 def like_comment(actor, comment):
-    like_obj, _ = Like.objects.get_or_create(
+    like_obj, created = Like.objects.get_or_create(
         actor=actor,
         object_id=_require_visible_comment(comment),
         defaults={"comment": comment, "page": comment.page},
     )
+    if created:
+        from social.notifications import notify_like
+
+        notify_like(like_obj)
     return like_obj
 
 
@@ -75,11 +87,15 @@ def unlike_comment(actor, comment):
 
 @transaction.atomic
 def boost_comment(actor, comment):
-    boost_obj, _ = Boost.objects.get_or_create(
+    boost_obj, created = Boost.objects.get_or_create(
         actor=actor,
         object_id=_require_visible_comment(comment),
         defaults={"comment": comment, "page": comment.page},
     )
+    if created:
+        from social.notifications import notify_boost
+
+        notify_boost(boost_obj)
     return boost_obj
 
 

@@ -87,6 +87,10 @@ def handle_like(activity):
     if not created and not like_obj.activity_id:
         like_obj.activity_id = activity.ap_id
         like_obj.save(update_fields=["activity_id", "updated_at"])
+    if created:
+        from social.notifications import notify_like
+
+        notify_like(like_obj)
 
 
 @handlers.register("Announce")
@@ -103,6 +107,10 @@ def handle_announce(activity):
     if not created and not boost_obj.activity_id:
         boost_obj.activity_id = activity.ap_id
         boost_obj.save(update_fields=["activity_id", "updated_at"])
+    if created:
+        from social.notifications import notify_boost
+
+        notify_boost(boost_obj)
 
 
 @handlers.register("Accept")
