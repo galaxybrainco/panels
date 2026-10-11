@@ -124,6 +124,7 @@ class Comment(UUIDModel):
     )
     hidden_by_ban = models.BooleanField(default=False)
     activity_id = models.CharField(max_length=255, blank=True, default="")
+    crawled_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ["created_at", "id"]

@@ -1,21 +1,8 @@
-from django.conf import settings
-
 from actors.models import Actor
-from comics.federation import federation_plan
-from comics.models import Page, PageStatus
 from federation import handlers
 from social import services
-from social.comments import comment_status_for
+from social.comments import federatable_page, reply_target, store_inbound_reply
 from social.models import Boost, Comment, CommentStatus, Follow, FollowStatus, Like
-from social.moderation import is_banned
-from social.sanitize import sanitize_html
-
-
-def _federatable_page(object_id):
-    page = Page.objects.filter(ap_id=object_id, status=PageStatus.PUBLISHED).first()
-    if page is None or not federation_plan(page).emit:
-        return None
-    return page
 
 
 def _resolve_reaction_target(object_id):
@@ -23,56 +10,25 @@ def _resolve_reaction_target(object_id):
         ap_id=object_id, status=CommentStatus.VISIBLE
     ).first()
     if comment is not None:
-        page = comment.page
-        if page.status == PageStatus.PUBLISHED and federation_plan(page).emit:
-            return page, comment
-        return None, None
-    page = _federatable_page(object_id)
+        page = federatable_page(comment.page.ap_id)
+        if page is None:
+            return None, None
+        return page, comment
+    page = federatable_page(object_id)
     if page is None:
         return None, None
     return page, None
 
 
-def _object_iri(value):
-    if isinstance(value, dict):
-        return value.get("id")
-    return value
-
-
 @handlers.register("Create")
 def handle_create(activity):
-    note = activity.payload.get("object")
-    if not isinstance(note, dict) or note.get("type") != "Note":
-        return
-    in_reply_to = note.get("inReplyTo")
-    ap_id = note.get("id")
-    if not in_reply_to or not ap_id:
-        return
-    if ap_id.startswith(settings.INSTANCE_URL):
-        return
-    parent = None
-    page = _federatable_page(in_reply_to)
-    if page is None:
-        parent = Comment.objects.filter(ap_id=in_reply_to).first()
-        if parent is None:
-            return
-        page = parent.page
-        if page.status != PageStatus.PUBLISHED or not federation_plan(page).emit:
-            return
-    if is_banned(page.series.comic, activity.actor):
-        return
-    if Comment.objects.filter(ap_id=ap_id).exists():
-        return
-    Comment.objects.create(
-        actor=activity.actor,
-        page=page,
-        parent=parent,
-        ap_id=ap_id,
-        in_reply_to=in_reply_to,
-        content=sanitize_html(note.get("content", "")),
-        status=comment_status_for(page),
-        activity_id=activity.ap_id,
+    from social.tasks import crawl_comment_thread
+
+    comment = store_inbound_reply(
+        activity.payload.get("object"), activity.actor, activity_id=activity.ap_id
     )
+    if comment is not None:
+        crawl_comment_thread.enqueue(str(comment.id))
 
 
 @handlers.register("Follow")
@@ -101,15 +57,15 @@ def handle_undo(activity):
         obj_type = obj.get("type")
         if obj_type == "Follow":
             Follow.objects.filter(
-                follower=activity.actor, target__ap_id=_object_iri(obj.get("object"))
+                follower=activity.actor, target__ap_id=reply_target(obj.get("object"))
             ).delete()
         elif obj_type == "Like":
             Like.objects.filter(
-                actor=activity.actor, object_id=_object_iri(obj.get("object"))
+                actor=activity.actor, object_id=reply_target(obj.get("object"))
             ).delete()
         elif obj_type == "Announce":
             Boost.objects.filter(
-                actor=activity.actor, object_id=_object_iri(obj.get("object"))
+                actor=activity.actor, object_id=reply_target(obj.get("object"))
             ).delete()
     elif isinstance(obj, str) and obj:
         Follow.objects.filter(follower=activity.actor, activity_id=obj).delete()
@@ -119,7 +75,7 @@ def handle_undo(activity):
 
 @handlers.register("Like")
 def handle_like(activity):
-    object_id = _object_iri(activity.payload.get("object"))
+    object_id = reply_target(activity.payload.get("object"))
     page, comment = _resolve_reaction_target(object_id)
     if page is None:
         return
@@ -135,7 +91,7 @@ def handle_like(activity):
 
 @handlers.register("Announce")
 def handle_announce(activity):
-    object_id = _object_iri(activity.payload.get("object"))
+    object_id = reply_target(activity.payload.get("object"))
     page, comment = _resolve_reaction_target(object_id)
     if page is None:
         return
