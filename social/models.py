@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.db import models
 
 from core.models import UUIDModel
@@ -150,3 +151,77 @@ class CommentBan(UUIDModel):
 
     def __str__(self):
         return f"{self.actor} banned from {self.comic}"
+
+
+class ReadingProgress(UUIDModel):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="reading_progress",
+    )
+    series = models.ForeignKey(
+        "comics.Series", on_delete=models.CASCADE, related_name="reading_progress"
+    )
+    page = models.ForeignKey(
+        "comics.Page",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "series"], name="unique_progress_per_series"
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.user} @ {self.series}"
+
+
+class NotificationType(models.TextChoices):
+    NEW_PAGE = "new_page", "New page"
+    REPLY = "reply", "Reply"
+    LIKE = "like", "Like"
+    BOOST = "boost", "Boost"
+    FOLLOW = "follow", "Follow"
+
+
+class Notification(UUIDModel):
+    recipient = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="notifications",
+    )
+    type = models.CharField(max_length=16, choices=NotificationType.choices)
+    actor = models.ForeignKey(
+        "actors.Actor",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="notifications",
+    )
+    page = models.ForeignKey(
+        "comics.Page",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="notifications",
+    )
+    comment = models.ForeignKey(
+        "social.Comment",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="notifications",
+    )
+    read = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["recipient", "read"])]
+
+    def __str__(self):
+        return f"{self.type} → {self.recipient}"
