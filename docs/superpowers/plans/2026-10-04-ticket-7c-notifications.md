@@ -146,14 +146,14 @@ def remote(handle="bob"):
 def test_notify_creates_a_notification():
     recipient = user()
     actor = remote("bob")
-    note = notify(recipient, type=NotificationType.FOLLOW, actor=actor)
+    note = notify(recipient, kind=NotificationType.FOLLOW, actor=actor)
     assert note.recipient == recipient
     assert note.type == NotificationType.FOLLOW
 
 
 @pytest.mark.django_db
 def test_notify_skips_missing_recipient():
-    assert notify(None, type=NotificationType.FOLLOW) is None
+    assert notify(None, kind=NotificationType.FOLLOW) is None
     assert Notification.objects.count() == 0
 
 
@@ -163,17 +163,17 @@ def test_notify_skips_self():
     owner = user()
     actor.user = owner
     actor.save()
-    assert notify(owner, type=NotificationType.FOLLOW, actor=actor) is None
+    assert notify(owner, kind=NotificationType.FOLLOW, actor=actor) is None
 
 
 @pytest.mark.django_db
 def test_mark_read_and_all_read():
     recipient = user()
-    keep = notify(recipient, type=NotificationType.FOLLOW)
+    keep = notify(recipient, kind=NotificationType.FOLLOW)
     mark_read(keep)
     keep.refresh_from_db()
     assert keep.read is True
-    notify(recipient, type=NotificationType.LIKE)
+    notify(recipient, kind=NotificationType.LIKE)
     mark_all_read(recipient)
     assert not Notification.objects.filter(recipient=recipient, read=False).exists()
 ```
@@ -386,7 +386,7 @@ def test_publish_notifies_local_followers():
     publish_page(owner, series_page)
 
     assert Notification.objects.filter(
-        recipient=follower, type=NotificationType.NEW_PAGE, page=series_page
+        recipient=follower, kind=NotificationType.NEW_PAGE, page=series_page
     ).exists()
 
 
@@ -403,7 +403,7 @@ def test_publish_does_not_notify_remote_followers():
 
     publish_page(owner, page)
 
-    assert not Notification.objects.filter(type=NotificationType.NEW_PAGE).exists()
+    assert not Notification.objects.filter(kind=NotificationType.NEW_PAGE).exists()
 
 
 @pytest.mark.django_db
@@ -415,7 +415,7 @@ def test_accept_follow_notifies_comic_owner():
     )
     accept_follow(follow)
     assert Notification.objects.filter(
-        recipient=owner, type=NotificationType.FOLLOW, actor=bob
+        recipient=owner, kind=NotificationType.FOLLOW, actor=bob
     ).exists()
 ```
 
@@ -448,7 +448,7 @@ def notify_new_page(page):
             continue
         note = notify(
             recipient,
-            type=NotificationType.NEW_PAGE,
+            kind=NotificationType.NEW_PAGE,
             actor=comic.actor,
             page=page,
         )
@@ -469,7 +469,7 @@ def notify_follow(follow):
         recipient = owner_role.user if owner_role is not None else None
     else:
         recipient = _actor_user(target)
-    return notify(recipient, type=NotificationType.FOLLOW, actor=follow.follower)
+    return notify(recipient, kind=NotificationType.FOLLOW, actor=follow.follower)
 ```
 
 In `comics/publishing.py`'s `publish(...)`, after the Create emission (before `return locked`), add:
@@ -531,7 +531,7 @@ def test_reply_to_comment_notifies_parent_author():
     replier = create_local_actor(f"replier{uuid4().hex[:6]}", user=user())
     add_comment(replier, page, "<p>reply</p>", parent=parent)
     assert Notification.objects.filter(
-        recipient=author, type=NotificationType.REPLY, comment__parent=parent
+        recipient=author, kind=NotificationType.REPLY, comment__parent=parent
     ).exists()
 
 
@@ -541,7 +541,7 @@ def test_top_level_reply_notifies_page_publisher():
     replier = create_local_actor(f"replier{uuid4().hex[:6]}", user=user())
     add_comment(replier, page, "<p>reply</p>")
     assert Notification.objects.filter(
-        recipient=owner, type=NotificationType.REPLY, page=page
+        recipient=owner, kind=NotificationType.REPLY, page=page
     ).exists()
 
 
@@ -553,7 +553,7 @@ def test_like_on_page_notifies_publisher():
 
     like(other, page)
     assert Notification.objects.filter(
-        recipient=owner, type=NotificationType.LIKE, page=page
+        recipient=owner, kind=NotificationType.LIKE, page=page
     ).exists()
 
 
@@ -564,7 +564,7 @@ def test_like_on_own_page_does_not_notify():
     from social.reactions import like
 
     like(owner_actor, page)
-    assert not Notification.objects.filter(type=NotificationType.LIKE).exists()
+    assert not Notification.objects.filter(kind=NotificationType.LIKE).exists()
 
 
 @pytest.mark.django_db
@@ -576,7 +576,7 @@ def test_like_on_comment_notifies_comment_author():
     liker = create_local_actor(f"liker{uuid4().hex[:6]}", user=user())
     like_comment(liker, comment)
     assert Notification.objects.filter(
-        recipient=author, type=NotificationType.LIKE, comment=comment
+        recipient=author, kind=NotificationType.LIKE, comment=comment
     ).exists()
 ```
 
@@ -598,7 +598,7 @@ def notify_reply(comment):
         recipient = comment.page.published_by
     return notify(
         recipient,
-        type=NotificationType.REPLY,
+        kind=NotificationType.REPLY,
         actor=comment.actor,
         page=comment.page,
         comment=comment,
@@ -618,7 +618,7 @@ def _reaction_recipient(reaction):
 def notify_like(like):
     return notify(
         _reaction_recipient(like),
-        type=NotificationType.LIKE,
+        kind=NotificationType.LIKE,
         actor=like.actor,
         page=like.page,
         comment=like.comment,
@@ -628,7 +628,7 @@ def notify_like(like):
 def notify_boost(boost):
     return notify(
         _reaction_recipient(boost),
-        type=NotificationType.BOOST,
+        kind=NotificationType.BOOST,
         actor=boost.actor,
         page=boost.page,
         comment=boost.comment,

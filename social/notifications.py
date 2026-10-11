@@ -7,14 +7,14 @@ def _actor_user(actor):
     return None
 
 
-def notify(recipient, *, type, actor=None, page=None, comment=None):
+def notify(recipient, *, kind, actor=None, page=None, comment=None):
     if recipient is None:
         return None
     actor_user = _actor_user(actor)
     if actor_user is not None and actor_user.pk == recipient.pk:
         return None
     return Notification.objects.create(
-        recipient=recipient, type=type, actor=actor, page=page, comment=comment
+        recipient=recipient, type=kind, actor=actor, page=page, comment=comment
     )
 
 

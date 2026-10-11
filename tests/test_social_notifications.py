@@ -30,14 +30,14 @@ def remote(handle="bob"):
 def test_notify_creates_a_notification():
     recipient = user()
     actor = remote("bob")
-    note = notify(recipient, type=NotificationType.FOLLOW, actor=actor)
+    note = notify(recipient, kind=NotificationType.FOLLOW, actor=actor)
     assert note.recipient == recipient
     assert note.type == NotificationType.FOLLOW
 
 
 @pytest.mark.django_db
 def test_notify_skips_missing_recipient():
-    assert notify(None, type=NotificationType.FOLLOW) is None
+    assert notify(None, kind=NotificationType.FOLLOW) is None
     assert Notification.objects.count() == 0
 
 
@@ -47,16 +47,16 @@ def test_notify_skips_self():
     owner = user()
     actor.user = owner
     actor.save()
-    assert notify(owner, type=NotificationType.FOLLOW, actor=actor) is None
+    assert notify(owner, kind=NotificationType.FOLLOW, actor=actor) is None
 
 
 @pytest.mark.django_db
 def test_mark_read_and_all_read():
     recipient = user()
-    keep = notify(recipient, type=NotificationType.FOLLOW)
+    keep = notify(recipient, kind=NotificationType.FOLLOW)
     mark_read(keep)
     keep.refresh_from_db()
     assert keep.read is True
-    notify(recipient, type=NotificationType.LIKE)
+    notify(recipient, kind=NotificationType.LIKE)
     mark_all_read(recipient)
     assert not Notification.objects.filter(recipient=recipient, read=False).exists()
