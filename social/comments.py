@@ -34,6 +34,9 @@ def add_comment(actor, page, content, parent=None):
     )
     comment.ap_id = f"{settings.INSTANCE_URL}/comments/{comment.id}"
     comment.save()
+    from social.notifications import notify_reply
+
+    notify_reply(comment)
     return comment
 
 
@@ -88,7 +91,7 @@ def store_inbound_reply(note, actor, activity_id=""):
             return None
     if is_banned(page.series.comic, actor):
         return None
-    return Comment.objects.create(
+    comment = Comment.objects.create(
         actor=actor,
         page=page,
         parent=parent,
@@ -98,3 +101,7 @@ def store_inbound_reply(note, actor, activity_id=""):
         status=comment_status_for(page),
         activity_id=activity_id,
     )
+    from social.notifications import notify_reply
+
+    notify_reply(comment)
+    return comment

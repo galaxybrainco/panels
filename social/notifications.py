@@ -66,3 +66,48 @@ def notify_follow(follow):
     else:
         recipient = _actor_user(target)
     return notify(recipient, kind=NotificationType.FOLLOW, actor=follow.follower)
+
+
+def notify_reply(comment):
+    recipient = None
+    if comment.parent is not None:
+        recipient = _actor_user(comment.parent.actor)
+    if recipient is None:
+        recipient = comment.page.published_by
+    return notify(
+        recipient,
+        kind=NotificationType.REPLY,
+        actor=comment.actor,
+        page=comment.page,
+        comment=comment,
+    )
+
+
+def _reaction_recipient(reaction):
+    if reaction.comment_id:
+        recipient = _actor_user(reaction.comment.actor)
+        if recipient is not None:
+            return recipient
+    if reaction.page_id:
+        return reaction.page.published_by
+    return None
+
+
+def notify_like(like):
+    return notify(
+        _reaction_recipient(like),
+        kind=NotificationType.LIKE,
+        actor=like.actor,
+        page=like.page,
+        comment=like.comment,
+    )
+
+
+def notify_boost(boost):
+    return notify(
+        _reaction_recipient(boost),
+        kind=NotificationType.BOOST,
+        actor=boost.actor,
+        page=boost.page,
+        comment=boost.comment,
+    )

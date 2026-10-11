@@ -6,6 +6,7 @@ from django.contrib.auth import get_user_model
 from actors.models import Actor, ActorType
 from actors.services import create_local_actor
 from comics.services import create_comic, create_page, create_series
+from social.comments import add_comment
 from social.models import (
     Follow,
     FollowStatus,
@@ -13,6 +14,7 @@ from social.models import (
     NotificationType,
 )
 from social.notifications import mark_all_read, mark_read, notify
+from social.reactions import like, like_comment
 from social.services import accept_follow
 from tests.media_support import make_media
 
@@ -128,4 +130,58 @@ def test_accept_follow_notifies_comic_owner():
     accept_follow(follow)
     assert Notification.objects.filter(
         recipient=owner, type=NotificationType.FOLLOW, actor=bob
+    ).exists()
+
+
+@pytest.mark.django_db
+def test_reply_to_comment_notifies_parent_author():
+    owner, comic, page = scene()
+    author = user()
+    author_actor = create_local_actor(f"author{uuid4().hex[:6]}", user=author)
+    parent = add_comment(author_actor, page, "<p>top</p>")
+    replier = create_local_actor(f"replier{uuid4().hex[:6]}", user=user())
+    add_comment(replier, page, "<p>reply</p>", parent=parent)
+    assert Notification.objects.filter(
+        recipient=author, type=NotificationType.REPLY, comment__parent=parent
+    ).exists()
+
+
+@pytest.mark.django_db
+def test_top_level_reply_notifies_page_publisher():
+    owner, comic, page = scene()
+    replier = create_local_actor(f"replier{uuid4().hex[:6]}", user=user())
+    add_comment(replier, page, "<p>reply</p>")
+    assert Notification.objects.filter(
+        recipient=owner, type=NotificationType.REPLY, page=page
+    ).exists()
+
+
+@pytest.mark.django_db
+def test_like_on_page_notifies_publisher():
+    owner, comic, page = scene()
+    other = create_local_actor(f"liker{uuid4().hex[:6]}", user=user())
+    like(other, page)
+    assert Notification.objects.filter(
+        recipient=owner, type=NotificationType.LIKE, page=page
+    ).exists()
+
+
+@pytest.mark.django_db
+def test_like_on_own_page_does_not_notify():
+    owner, comic, page = scene()
+    owner_actor = create_local_actor(f"own{uuid4().hex[:6]}", user=owner)
+    like(owner_actor, page)
+    assert not Notification.objects.filter(type=NotificationType.LIKE).exists()
+
+
+@pytest.mark.django_db
+def test_like_on_comment_notifies_comment_author():
+    owner, comic, page = scene()
+    author = user()
+    author_actor = create_local_actor(f"author{uuid4().hex[:6]}", user=author)
+    comment = add_comment(author_actor, page, "<p>x</p>")
+    liker = create_local_actor(f"liker{uuid4().hex[:6]}", user=user())
+    like_comment(liker, comment)
+    assert Notification.objects.filter(
+        recipient=author, type=NotificationType.LIKE, comment=comment
     ).exists()
