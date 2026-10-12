@@ -9,8 +9,9 @@ from django.db.models import Max
 from PIL import Image, UnidentifiedImageError
 
 from comics import permissions
-from comics.models import Page
+from comics.models import Comic, Page
 from media.models import Media
+from media.quota import ensure_within_quota
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +70,9 @@ def add_media(user, page, uploaded_file, *, alt_text=""):
         raise PermissionDenied("You cannot add media to this comic.")
     width, height, image_format = _validate_upload(uploaded_file)
     digest = _sha256(uploaded_file)
+    comic = page.series.comic
+    Comic.objects.select_for_update().get(pk=comic.pk)
+    ensure_within_quota(comic, uploaded_file.size)
     locked_page = Page.objects.select_for_update().get(pk=page.pk)
     current = locked_page.media.aggregate(Max("position"))["position__max"]
     media = Media(

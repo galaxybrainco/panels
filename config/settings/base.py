@@ -3,6 +3,8 @@ from urllib.parse import urlparse
 
 import environ
 
+from media.storage import build_media_storage
+
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 env = environ.Env()
@@ -134,6 +136,7 @@ MEDIA_URL = "media/"
 MEDIA_ROOT = BASE_DIR / "uploads"
 MEDIA_MAX_UPLOAD_BYTES = env.int("MEDIA_MAX_UPLOAD_BYTES", default=25_000_000)
 MEDIA_ALLOWED_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+MEDIA_STORAGE_QUOTA_BYTES = env.int("MEDIA_STORAGE_QUOTA_BYTES", default=10 * 1024**3)
 MEDIA_DERIVATIVE_BACKEND = env(
     "MEDIA_DERIVATIVE_BACKEND",
     default="media.derivative_urls.LocalDerivativeBackend",
@@ -141,7 +144,14 @@ MEDIA_DERIVATIVE_BACKEND = env(
 MEDIA_CDN_BASE_URL = env("MEDIA_CDN_BASE_URL", default="")
 
 STORAGES = {
-    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "default": build_media_storage(
+        bucket=env("MEDIA_STORAGE_BUCKET", default=""),
+        endpoint_url=env("MEDIA_STORAGE_ENDPOINT_URL", default=""),
+        access_key=env("MEDIA_STORAGE_ACCESS_KEY", default=""),
+        secret_key=env("MEDIA_STORAGE_SECRET_KEY", default=""),
+        region=env("MEDIA_STORAGE_REGION", default="de"),
+        custom_domain=env("MEDIA_STORAGE_CUSTOM_DOMAIN", default=""),
+    ),
     "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
 }
 
