@@ -1,3 +1,4 @@
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.utils import timezone
 
@@ -19,6 +20,8 @@ def link_supporter(actor, comic, provider, email):
 
 
 def grant_supporter_status(link, tier, *, valid_until=None, active=True):
+    if tier.comic_id != link.comic_id:
+        raise ValidationError("The tier belongs to a different comic.")
     return SupporterStatus.objects.create(
         link=link, tier=tier, valid_until=valid_until, active=active
     )

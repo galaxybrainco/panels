@@ -154,6 +154,30 @@ def test_tier_page_requires_that_rank():
 
 
 @pytest.mark.django_db
+def test_grant_rejects_tier_from_another_comic():
+    _, comic, _ = scene()
+    _, other_comic, _ = scene()
+    actor = create_local_actor("alice")
+    link = link_supporter(actor, comic, Provider.KOFI, "alice@example.com")
+    foreign_tier = Tier.objects.create(comic=other_comic, name="Fan", rank=1)
+    from django.core.exceptions import ValidationError
+
+    with pytest.raises(ValidationError):
+        grant_supporter_status(link, foreign_tier)
+
+
+@pytest.mark.django_db
+def test_page_required_tier_must_belong_to_the_comic():
+    _, comic, page = scene()
+    _, other_comic, _ = scene()
+    page.required_tier = Tier.objects.create(comic=other_comic, name="Fan", rank=1)
+    from django.core.exceptions import ValidationError
+
+    with pytest.raises(ValidationError):
+        page.full_clean()
+
+
+@pytest.mark.django_db
 def test_active_plan_overrides_the_storage_cap(settings):
     _, comic, _ = scene()
     settings.MEDIA_STORAGE_QUOTA_BYTES = 111
