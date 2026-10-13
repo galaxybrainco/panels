@@ -15,7 +15,19 @@ def comic_storage_bytes(comic):
 
 
 def comic_storage_quota(comic):
+    plan = _active_plan(comic)
+    if plan is not None:
+        return plan.quota_bytes
     return getattr(settings, "MEDIA_STORAGE_QUOTA_BYTES", DEFAULT_QUOTA_BYTES)
+
+
+def _active_plan(comic):
+    from memberships.models import ComicPlan, PlanStatus
+
+    plan = ComicPlan.objects.filter(comic=comic).first()
+    if plan is not None and plan.status == PlanStatus.ACTIVE:
+        return plan
+    return None
 
 
 def ensure_within_quota(comic, additional_bytes):
