@@ -181,6 +181,13 @@ class Page(UUIDModel):
     audience = models.CharField(
         max_length=16, choices=Audience.choices, default=Audience.PUBLIC
     )
+    required_tier = models.ForeignKey(
+        "memberships.Tier",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="pages",
+    )
     federation = models.CharField(
         max_length=16,
         choices=FederationMode.choices,

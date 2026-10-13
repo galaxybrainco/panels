@@ -9,11 +9,15 @@ from django.utils import timezone
 from actors.models import Actor, ActorType
 from actors.services import create_local_actor
 from comics.services import create_comic, create_page, create_series
+from federation.activitypub import Audience
 from memberships.models import Provider, SupporterLink, Tier
 from memberships.services import (
+    ANY_SUPPORTER,
     active_supporter_status,
+    can_view_page,
     grant_supporter_status,
     link_supporter,
+    page_requires_tier,
     supporter_has_access,
 )
 
@@ -110,3 +114,39 @@ def test_remote_actor_can_support():
 def test_none_actor_has_no_access():
     _, comic, _ = scene()
     assert supporter_has_access(None, comic) is False
+
+
+@pytest.mark.django_db
+def test_public_page_requires_nothing():
+    _, comic, page = scene()
+    assert page_requires_tier(page) is None
+    assert can_view_page(None, page) is True
+
+
+@pytest.mark.django_db
+def test_members_page_requires_any_supporter():
+    _, comic, page = scene()
+    page.audience = Audience.MEMBERS
+    page.save()
+    assert page_requires_tier(page) is ANY_SUPPORTER
+    actor = create_local_actor("alice")
+    assert can_view_page(actor, page) is False
+    link = link_supporter(actor, comic, Provider.KOFI, "alice@example.com")
+    grant_supporter_status(link, Tier.objects.create(comic=comic, name="Fan", rank=1))
+    assert can_view_page(actor, page) is True
+
+
+@pytest.mark.django_db
+def test_tier_page_requires_that_rank():
+    _, comic, page = scene()
+    fan = Tier.objects.create(comic=comic, name="Fan", rank=1)
+    patron = Tier.objects.create(comic=comic, name="Patron", rank=3)
+    page.audience = Audience.TIER
+    page.required_tier = patron
+    page.save()
+    actor = create_local_actor("alice")
+    link = link_supporter(actor, comic, Provider.KOFI, "alice@example.com")
+    grant_supporter_status(link, fan)
+    assert can_view_page(actor, page) is False
+    grant_supporter_status(link, patron)
+    assert can_view_page(actor, page) is True

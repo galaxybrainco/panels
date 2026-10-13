@@ -1,6 +1,7 @@
 from django.db import models
 from django.utils import timezone
 
+from federation.activitypub import Audience
 from memberships.models import SupporterLink, SupporterStatus
 
 
@@ -45,3 +46,23 @@ def supporter_has_access(actor, comic, tier=None):
     if tier is None:
         return True
     return status.tier.rank >= tier.rank
+
+
+ANY_SUPPORTER = object()
+
+
+def page_requires_tier(page):
+    if page.audience not in (Audience.MEMBERS, Audience.TIER):
+        return None
+    if page.audience == Audience.TIER and page.required_tier_id:
+        return page.required_tier
+    return ANY_SUPPORTER
+
+
+def can_view_page(actor, page):
+    required = page_requires_tier(page)
+    if required is None:
+        return True
+    if required is ANY_SUPPORTER:
+        return supporter_has_access(actor, page.series.comic)
+    return supporter_has_access(actor, page.series.comic, required)
