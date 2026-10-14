@@ -1,4 +1,5 @@
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Q
 from django.utils.text import slugify
@@ -181,6 +182,13 @@ class Page(UUIDModel):
     audience = models.CharField(
         max_length=16, choices=Audience.choices, default=Audience.PUBLIC
     )
+    required_tier = models.ForeignKey(
+        "memberships.Tier",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="pages",
+    )
     federation = models.CharField(
         max_length=16,
         choices=FederationMode.choices,
@@ -202,6 +210,16 @@ class Page(UUIDModel):
             models.Index(fields=["status", "scheduled_for"], name="page_due_idx")
         ]
         ordering = ["series", "position", "id"]
+
+    def clean(self):
+        super().clean()
+        if (
+            self.required_tier_id
+            and self.required_tier.comic_id != self.series.comic_id
+        ):
+            raise ValidationError(
+                {"required_tier": "The tier must belong to the page's comic."}
+            )
 
     def __str__(self):
         return f"{self.series} #{self.position}"
