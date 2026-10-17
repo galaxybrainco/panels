@@ -74,6 +74,7 @@ INSTALLED_APPS = [
     "media",
     "federation",
     "social",
+    "billing",
     "memberships",
     "moderation",
     "feeds",
