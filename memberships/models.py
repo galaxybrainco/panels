@@ -112,6 +112,7 @@ class ProviderSupporter(UUIDModel):
     active = models.BooleanField(default=False)
     valid_until = models.DateTimeField(null=True, blank=True)
     last_payment_at = models.DateTimeField(null=True, blank=True)
+    last_transaction_id = models.CharField(max_length=255, blank=True, default="")
 
     class Meta:
         constraints = [

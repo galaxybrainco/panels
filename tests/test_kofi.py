@@ -1,4 +1,6 @@
+import json
 from datetime import timedelta
+from urllib.parse import urlencode
 from uuid import uuid4
 
 import pytest
@@ -246,3 +248,92 @@ def test_expire_command_deactivates_lapsed_supporters():
     supporter.refresh_from_db()
     assert supporter.active is False
     assert not SupporterStatus.objects.filter(active=True).exists()
+
+
+@pytest.mark.django_db
+def test_webhook_accepts_kofi_data_wrapper(client):
+    _, comic, connection = scene()
+    response = client.post(
+        f"/webhooks/kofi/{comic.id}",
+        data=urlencode({"data": json.dumps(kofi_payload())}),
+        content_type="application/x-www-form-urlencoded",
+    )
+    assert response.status_code == 200
+    assert ProviderSupporter.objects.count() == 1
+
+
+@pytest.mark.django_db
+def test_webhook_ignores_blank_email(client):
+    _, comic, connection = scene()
+    response = client.post(
+        f"/webhooks/kofi/{comic.id}",
+        data=kofi_payload(email=""),
+        content_type="application/json",
+    )
+    assert response.status_code == 200
+    assert ProviderSupporter.objects.count() == 0
+
+
+@pytest.mark.django_db
+def test_webhook_rejects_invalid_json(client):
+    _, comic, connection = scene()
+    response = client.post(
+        f"/webhooks/kofi/{comic.id}",
+        data="{not json",
+        content_type="application/json",
+    )
+    assert response.status_code == 400
+
+
+@pytest.mark.django_db
+def test_duplicate_transaction_does_not_extend():
+    _, _, connection = scene()
+    payload = kofi_payload()
+    payload["kofi_transaction_id"] = "dup"
+    first = process_kofi_event(connection, payload)
+    stamp = first.valid_until
+    second = process_kofi_event(connection, payload)
+    assert second.valid_until == stamp
+    assert ProviderSupporter.objects.count() == 1
+
+
+@pytest.mark.django_db
+def test_string_subscription_flag_is_truthy():
+    _, _, connection = scene()
+    payload = kofi_payload()
+    payload["is_subscription_payment"] = "true"
+    assert process_kofi_event(connection, payload).active is True
+
+
+@pytest.mark.django_db
+def test_donation_after_subscription_does_not_change():
+    _, _, connection = scene()
+    supporter = process_kofi_event(connection, kofi_payload())
+    stamp = supporter.valid_until
+    tier = supporter.tier_name
+    donation = kofi_payload(subscription=False)
+    donation["tier_name"] = ""
+    process_kofi_event(connection, donation)
+    supporter.refresh_from_db()
+    assert supporter.active is True
+    assert supporter.valid_until == stamp
+    assert supporter.tier_name == tier
+
+
+@pytest.mark.django_db
+def test_renewal_after_link_extends_access():
+    _, comic, connection = scene()
+    Tier.objects.create(comic=comic, name="Fan", rank=1)
+    reader = user("reader@example.com")
+    actor = create_local_actor(f"reader{uuid4().hex[:6]}", user=reader)
+    first = kofi_payload(email="reader@example.com", tier_name="Fan")
+    first["kofi_transaction_id"] = "t1"
+    process_kofi_event(connection, first)
+    link = attach_pending_supporter(actor, comic, Provider.KOFI, "reader@example.com")
+    before = SupporterStatus.objects.get(link=link).valid_until
+    second = kofi_payload(email="reader@example.com", tier_name="Fan")
+    second["kofi_transaction_id"] = "t2"
+    process_kofi_event(connection, second)
+    status = SupporterStatus.objects.get(link=link)
+    assert status.valid_until > before
+    assert supporter_has_access(actor, comic) is True
