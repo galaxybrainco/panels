@@ -8,10 +8,11 @@ from django.utils import timezone
 
 from actors.models import Actor, ActorType
 from actors.services import create_local_actor
+from billing.models import ComicPlan, PlanStatus
 from comics.services import create_comic, create_page, create_series
 from federation.activitypub import Audience
 from media.quota import comic_storage_quota
-from memberships.models import ComicPlan, PlanStatus, Provider, SupporterLink, Tier
+from memberships.models import Provider, SupporterLink, Tier
 from memberships.services import (
     ANY_SUPPORTER,
     active_supporter_status,
@@ -198,3 +199,23 @@ def test_no_plan_uses_the_settings_default(settings):
     _, comic, _ = scene()
     settings.MEDIA_STORAGE_QUOTA_BYTES = 111
     assert comic_storage_quota(comic) == 111
+
+
+@pytest.mark.django_db
+def test_supporter_status_does_not_affect_storage_quota(settings):
+    _, comic, _ = scene()
+    settings.MEDIA_STORAGE_QUOTA_BYTES = 111
+    actor = create_local_actor("alice")
+    link = link_supporter(actor, comic, Provider.KOFI, "alice@example.com")
+    grant_supporter_status(link, Tier.objects.create(comic=comic, name="Fan", rank=1))
+    assert comic_storage_quota(comic) == 111
+
+
+@pytest.mark.django_db
+def test_comic_plan_does_not_grant_page_access(settings):
+    _, comic, page = scene()
+    page.audience = Audience.MEMBERS
+    page.save()
+    ComicPlan.objects.create(comic=comic, status=PlanStatus.ACTIVE, quota_bytes=999)
+    actor = create_local_actor("alice")
+    assert can_view_page(actor, page) is False

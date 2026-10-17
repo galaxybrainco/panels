@@ -22,7 +22,7 @@ def comic_storage_quota(comic):
 
 
 def _active_plan(comic):
-    from memberships.models import ComicPlan, PlanStatus
+    from billing.models import ComicPlan, PlanStatus
 
     plan = ComicPlan.objects.filter(comic=comic).first()
     if plan is not None and plan.status == PlanStatus.ACTIVE:
