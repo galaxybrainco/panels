@@ -6,6 +6,8 @@ from django.contrib.auth import get_user_model
 from comics.services import create_comic
 from memberships.models import Provider, ProviderConnection, ProviderSupporter
 
+TEST_TOKEN = "secret"
+
 
 def user(email=None):
     return get_user_model().objects.create_user(
@@ -13,7 +15,7 @@ def user(email=None):
     )
 
 
-def scene(token="secret"):
+def scene(token=TEST_TOKEN):
     owner = user()
     comic = create_comic(owner, f"comic{uuid4().hex[:6]}", "Lunar Baboon")
     connection = ProviderConnection(comic=comic, provider=Provider.KOFI)
