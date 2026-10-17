@@ -3,6 +3,7 @@ from uuid import uuid4
 
 import pytest
 from django.contrib.auth import get_user_model
+from django.core.management import call_command
 from django.utils import timezone
 
 from actors.services import create_local_actor
@@ -171,3 +172,77 @@ def test_attach_without_tier_match_creates_no_status():
     assert link is not None
     assert not SupporterStatus.objects.filter(link=link).exists()
     assert supporter_has_access(actor, comic) is False
+
+
+@pytest.mark.django_db
+def test_webhook_accepts_valid_json(client):
+    _, comic, connection = scene()
+    response = client.post(
+        f"/webhooks/kofi/{comic.id}",
+        data=kofi_payload(),
+        content_type="application/json",
+    )
+    assert response.status_code == 200
+    assert ProviderSupporter.objects.filter(email="reader@example.com").exists()
+
+
+@pytest.mark.django_db
+def test_webhook_accepts_form_encoded(client):
+    _, comic, connection = scene()
+    response = client.post(f"/webhooks/kofi/{comic.id}", data=kofi_payload())
+    assert response.status_code == 200
+    assert ProviderSupporter.objects.count() == 1
+
+
+@pytest.mark.django_db
+def test_webhook_rejects_bad_token(client):
+    _, comic, connection = scene()
+    response = client.post(
+        f"/webhooks/kofi/{comic.id}",
+        data=kofi_payload(token="wrong"),
+        content_type="application/json",
+    )
+    assert response.status_code == 403
+    assert ProviderSupporter.objects.count() == 0
+
+
+@pytest.mark.django_db
+def test_webhook_404_for_unknown_comic_and_405_for_get(client):
+    _, _, connection = scene()
+    assert client.get(f"/webhooks/kofi/{connection.comic_id}").status_code == 405
+    from uuid import uuid4 as new_uuid
+
+    assert (
+        client.post(
+            f"/webhooks/kofi/{new_uuid()}",
+            data=kofi_payload(),
+            content_type="application/json",
+        ).status_code
+        == 404
+    )
+
+
+@pytest.mark.django_db
+def test_expire_command_deactivates_lapsed_supporters():
+    _, comic, connection = scene()
+    past = timezone.now() - timedelta(days=1)
+    supporter = ProviderSupporter.objects.create(
+        connection=connection,
+        email="reader@example.com",
+        active=True,
+        valid_until=past,
+    )
+    tier = Tier.objects.create(comic=comic, name="Fan", rank=1)
+    link = SupporterLink.objects.create(
+        comic=comic,
+        actor=create_local_actor("lapsed"),
+        provider=Provider.KOFI,
+        provider_email="reader@example.com",
+    )
+    SupporterStatus.objects.create(link=link, tier=tier, active=True, valid_until=past)
+
+    call_command("expire_supporters")
+
+    supporter.refresh_from_db()
+    assert supporter.active is False
+    assert not SupporterStatus.objects.filter(active=True).exists()
