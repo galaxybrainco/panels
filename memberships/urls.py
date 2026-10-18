@@ -8,4 +8,9 @@ urlpatterns = [
         views.kofi_webhook,
         name="kofi-webhook",
     ),
+    path(
+        "webhooks/bmac/<uuid:comic_id>/<str:secret>",
+        views.bmac_webhook,
+        name="bmac-webhook",
+    ),
 ]
