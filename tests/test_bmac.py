@@ -211,3 +211,92 @@ def test_reconcile_command_updates_bmac_connections():
     assert ProviderSupporter.objects.filter(
         connection=connection, email="reader@example.com", active=True
     ).exists()
+
+
+@responses.activate
+@pytest.mark.django_db
+def test_reconcile_pagination_cap_aborts_without_changes(monkeypatch):
+    _, comic, connection = scene()
+    supporter = ProviderSupporter.objects.create(
+        connection=connection,
+        email="reader@example.com",
+        tier_name="Fan",
+        active=True,
+        valid_until=timezone.now() + timedelta(days=30),
+    )
+    monkeypatch.setattr("memberships.bmac.MAX_PAGES", 1)
+    responses.add(
+        responses.GET,
+        API_URL,
+        json={"data": [], "next_page_url": f"{API_URL}?page=2"},
+        status=200,
+    )
+    with pytest.raises(BmacError):
+        reconcile_bmac(connection)
+    supporter.refresh_from_db()
+    assert supporter.active is True
+
+
+@responses.activate
+def test_fetch_subscriptions_detects_pagination_cycle():
+    page_two = f"{API_URL}?page=2"
+    responses.add(
+        responses.GET, API_URL, json={"data": [], "next_page_url": page_two}, status=200
+    )
+    responses.add(
+        responses.GET, page_two, json={"data": [], "next_page_url": API_URL}, status=200
+    )
+    with pytest.raises(BmacError, match="cycle"):
+        fetch_subscriptions("key")
+
+
+@responses.activate
+@pytest.mark.django_db
+def test_reconcile_skips_active_subscription_without_valid_period_end():
+    _, comic, connection = scene()
+    Tier.objects.create(comic=comic, name="Fan", rank=1)
+    reader = user("reader@example.com")
+    actor = create_local_actor(f"reader{uuid4().hex[:6]}", user=reader)
+    from memberships.services import link_supporter, supporter_has_access
+
+    link_supporter(actor, comic, Provider.BMAC, "reader@example.com")
+    supporter = ProviderSupporter.objects.create(
+        connection=connection,
+        email="reader@example.com",
+        tier_name="Fan",
+        active=True,
+        valid_until=timezone.now() + timedelta(days=30),
+    )
+    responses.add(
+        responses.GET, API_URL, json={"data": [subscription(end=None)]}, status=200
+    )
+    reconcile_bmac(connection)
+    supporter.refresh_from_db()
+    assert supporter.active is False
+    assert supporter_has_access(actor, comic) is False
+
+
+@pytest.mark.django_db
+def test_attach_pending_supporter_preserves_manual_status_for_expired_supporter():
+    from memberships.kofi import attach_pending_supporter
+    from memberships.services import (
+        grant_supporter_status,
+        link_supporter,
+        supporter_has_access,
+    )
+
+    _, comic, connection = scene()
+    tier = Tier.objects.create(comic=comic, name="Fan", rank=1)
+    reader = user("reader@example.com")
+    actor = create_local_actor(f"reader{uuid4().hex[:6]}", user=reader)
+    link = link_supporter(actor, comic, Provider.BMAC, "reader@example.com")
+    grant_supporter_status(link, tier)
+    ProviderSupporter.objects.create(
+        connection=connection,
+        email="reader@example.com",
+        tier_name="Fan",
+        active=True,
+        valid_until=timezone.now() - timedelta(days=1),
+    )
+    attach_pending_supporter(actor, comic, Provider.BMAC, "reader@example.com")
+    assert supporter_has_access(actor, comic) is True

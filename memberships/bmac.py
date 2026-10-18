@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime
 
 import requests
@@ -10,6 +11,8 @@ API_BASE = "https://developers.buymeacoffee.com/api/v1"
 TIMEOUT = 15
 MAX_PAGES = 20
 
+logger = logging.getLogger(__name__)
+
 
 class BmacError(Exception):
     pass
@@ -19,7 +22,11 @@ def fetch_subscriptions(api_key):
     url = f"{API_BASE}/subscriptions"
     headers = {"Authorization": f"Bearer {api_key}", "Accept": "application/json"}
     subscriptions = []
+    visited = set()
     for _ in range(MAX_PAGES):
+        if url in visited:
+            raise BmacError("pagination cycle")
+        visited.add(url)
         try:
             response = requests.get(url, headers=headers, timeout=TIMEOUT)
         except requests.RequestException as exc:
@@ -36,8 +43,8 @@ def fetch_subscriptions(api_key):
         subscriptions.extend(data)
         url = document.get("next_page_url") or document.get("next")
         if not url:
-            break
-    return subscriptions
+            return subscriptions
+    raise BmacError(f"subscription pagination exceeded {MAX_PAGES} pages")
 
 
 def _is_active(sub):
@@ -51,6 +58,7 @@ def _valid_until(sub):
     try:
         parsed = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
     except ValueError:
+        logger.warning("Invalid BMAC current_period_end: %r", raw)
         return None
     if timezone.is_naive(parsed):
         parsed = timezone.make_aware(parsed)
@@ -60,15 +68,19 @@ def _valid_until(sub):
 def reconcile_bmac(connection):
     subscriptions = fetch_subscriptions(connection.get_api_key())
     active = {}
+    now = timezone.now()
     for sub in subscriptions:
         if not isinstance(sub, dict) or not _is_active(sub):
             continue
         email = normalize_email(sub.get("email"))
         if not email:
             continue
+        valid_until = _valid_until(sub)
+        if valid_until is None or valid_until <= now:
+            continue
         active[email] = {
             "tier_name": str(sub.get("membership_level_name") or "").strip(),
-            "valid_until": _valid_until(sub),
+            "valid_until": valid_until,
         }
     for email, data in active.items():
         supporter, _ = ProviderSupporter.objects.get_or_create(

@@ -68,6 +68,11 @@ def attach_pending_supporter(actor, comic, provider, email):
         supporter = ProviderSupporter.objects.filter(
             connection=connection, email=normalized
         ).first()
-        if supporter is not None:
+        if (
+            supporter is not None
+            and supporter.active
+            and supporter.valid_until is not None
+            and supporter.valid_until > timezone.now()
+        ):
             apply_supporter_entitlement(supporter)
     return link
