@@ -623,3 +623,21 @@ git commit -m "feat: BMAC webhook trigger, task, and reconcile command"
 **Type consistency:** `normalize_email`/`resolve_tier`/`apply_supporter_entitlement` are the single shared entitlement path used by both providers; `fetch_subscriptions`/`reconcile_bmac` are the single BMAC path; `reconcile_bmac_comic` is the single task; `BmacError` is the failure signal that aborts without state change.
 
 **Review Focus coverage:** failed fetch makes no changes — Task 2; missing → deactivated + access lost — Task 2; idempotent reconcile — Task 2; bad webhook secret no work — Task 3; Ko-fi regression — Task 1 (existing suite).
+
+## Post-Review Fix Pass
+
+- **Critical — pagination cap:** `fetch_subscriptions` now raises `BmacError` when the next-page link is still present after `MAX_PAGES`, and detects pagination cycles, so a truncated fetch never deactivates supporters.
+- **Important — period end:** API-active subscriptions without a parseable future `current_period_end` are excluded from the active set (fail closed), logging invalid values instead of retaining a stale expiry.
+- **Important — Ko-fi attach:** `attach_pending_supporter` restores the active/unexpired guard so linking an expired supporter cannot revoke a manually granted status.
+
+Accepted risk: the BMAC webhook secret travels in the URL path (the provider configures a bare URL); treat proxy access logs as sensitive and rotate the token via admin if leaked.
+
+## Deferred Minor Findings
+
+- `ProviderSupporter` email uniqueness is case-sensitive; add a `Lower("email")` constraint/migration in a follow-up (all writes normalize).
+- Wrap the reconcile write phase in `transaction.atomic()`.
+- `reconcile_bmac` command exits 0 and prints success when some connections fail.
+- Webhook task logs and swallows `BmacError` (no retry); consider backend retry, enqueue coalescing, and per-connection throttling.
+- `last_payment_at` is not populated for BMAC subscriptions.
+- `resolve_tier` falls back to a previous tier when the API supplies an unmatched non-empty tier name.
+- Task does not re-assert `provider=Provider.BMAC`; empty API keys are not short-circuited before the request.
