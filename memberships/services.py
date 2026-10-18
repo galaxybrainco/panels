@@ -3,7 +3,7 @@ from django.db import models
 from django.utils import timezone
 
 from federation.activitypub import Audience
-from memberships.models import SupporterLink, SupporterStatus
+from memberships.models import SupporterLink, SupporterStatus, Tier
 
 
 def link_supporter(actor, comic, provider, email):
@@ -69,3 +69,52 @@ def can_view_page(actor, page):
     if required is ANY_SUPPORTER:
         return supporter_has_access(actor, page.series.comic)
     return supporter_has_access(actor, page.series.comic, required)
+
+
+def normalize_email(email):
+    return (email or "").strip().lower()
+
+
+def resolve_tier(comic, name, link=None):
+    if name:
+        tier = Tier.objects.filter(comic=comic, name__iexact=name).first()
+        if tier is not None:
+            return tier
+    if link is not None:
+        latest = (
+            SupporterStatus.objects.filter(link=link).order_by("-created_at").first()
+        )
+        if latest is not None:
+            return latest.tier
+    return None
+
+
+def _apply_status(link, tier, valid_until):
+    SupporterStatus.objects.filter(link=link, active=True).exclude(tier=tier).update(
+        active=False
+    )
+    SupporterStatus.objects.update_or_create(
+        link=link, tier=tier, defaults={"active": True, "valid_until": valid_until}
+    )
+
+
+def apply_supporter_entitlement(supporter):
+    comic = supporter.connection.comic
+    link = comic.supporter_links.filter(
+        provider=supporter.connection.provider,
+        provider_email__iexact=supporter.email,
+    ).first()
+    if link is None:
+        return
+    now = timezone.now()
+    if (
+        not supporter.active
+        or supporter.valid_until is None
+        or supporter.valid_until <= now
+    ):
+        SupporterStatus.objects.filter(link=link, active=True).update(active=False)
+        return
+    tier = resolve_tier(comic, supporter.tier_name, link)
+    if tier is None:
+        return
+    _apply_status(link, tier, supporter.valid_until)
