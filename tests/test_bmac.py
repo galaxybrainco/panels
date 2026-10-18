@@ -4,7 +4,9 @@ from uuid import uuid4
 import pytest
 import responses
 from django.contrib.auth import get_user_model
+from django.core.management import call_command
 from django.utils import timezone
+from django_tasks_db.models import DBTaskResult
 
 from actors.services import create_local_actor
 from comics.services import create_comic
@@ -177,3 +179,35 @@ def test_reconcile_refreshes_linked_access_and_case_insensitive_tier():
     responses.add(responses.GET, API_URL, json={"data": []}, status=200)
     reconcile_bmac(connection)
     assert supporter_has_access(actor, comic) is False
+
+
+@pytest.mark.django_db
+def test_bmac_webhook_enqueues_reconcile(client):
+    _, comic, connection = scene()
+    response = client.post(f"/webhooks/bmac/{comic.id}/hook-secret")
+    assert response.status_code == 200
+    assert DBTaskResult.objects.filter(
+        task_path__contains="reconcile_bmac_comic"
+    ).exists()
+
+
+@pytest.mark.django_db
+def test_bmac_webhook_rejects_bad_secret_and_unknown_comic(client):
+    _, comic, connection = scene()
+    assert client.post(f"/webhooks/bmac/{comic.id}/wrong").status_code == 403
+    from uuid import uuid4 as new_uuid
+
+    assert client.post(f"/webhooks/bmac/{new_uuid()}/hook-secret").status_code == 404
+    assert client.get(f"/webhooks/bmac/{comic.id}/hook-secret").status_code == 405
+
+
+@responses.activate
+@pytest.mark.django_db
+def test_reconcile_command_updates_bmac_connections():
+    _, comic, connection = scene()
+    Tier.objects.create(comic=comic, name="Fan", rank=1)
+    responses.add(responses.GET, API_URL, json={"data": [subscription()]}, status=200)
+    call_command("reconcile_bmac")
+    assert ProviderSupporter.objects.filter(
+        connection=connection, email="reader@example.com", active=True
+    ).exists()
