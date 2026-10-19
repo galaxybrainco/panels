@@ -1,13 +1,19 @@
+import hashlib
+import hmac
 import json
+import time
+from datetime import UTC, datetime
 from urllib.parse import parse_qs
 from uuid import uuid4
 
 import pytest
 import responses
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db import IntegrityError, transaction
 from django.test import override_settings
 
+from billing import webhooks
 from billing.models import BillingCustomer, ComicPlan, PlanStatus
 from comics.models import ComicRole
 from comics.services import create_comic
@@ -291,9 +297,7 @@ def test_portal_is_hidden_when_billing_disabled(client):
 def test_portal_rejects_non_owner(client):
     _, comic = _comic_scene()
     collaborator = _user()
-    ComicRole.objects.create(
-        comic=comic, user=collaborator, role=ComicRole.Role.EDITOR
-    )
+    ComicRole.objects.create(comic=comic, user=collaborator, role=ComicRole.Role.EDITOR)
     client.force_login(collaborator)
     response = client.post(f"/comics/{comic.id}/billing/portal")
     assert response.status_code == 403
@@ -316,3 +320,231 @@ def test_portal_stripe_failure_returns_502(client):
     response = client.post(f"/comics/{comic.id}/billing/portal")
     assert response.status_code == 502
     assert response.json() == {"error": "stripe_error"}
+
+
+def _signature(payload, secret=WEBHOOK_SECRET, timestamp=None):
+    timestamp = timestamp or int(time.time())
+    digest = hmac.new(
+        secret.encode(), f"{timestamp}.{payload}".encode(), hashlib.sha256
+    ).hexdigest()
+    return f"t={timestamp},v1={digest}"
+
+
+def _event(
+    event_type,
+    comic=None,
+    *,
+    status="active",
+    subscription_id="sub_1",
+    customer="cus_1",
+    period_end=1893456000,
+    metadata=None,
+):
+    subscription = {
+        "id": subscription_id,
+        "object": "subscription",
+        "customer": customer,
+        "status": status,
+        "metadata": {"comic_id": str(comic.id)} if comic else (metadata or {}),
+    }
+    if period_end is not None:
+        subscription["current_period_end"] = period_end
+    return json.dumps(
+        {
+            "id": "evt_1",
+            "object": "event",
+            "type": event_type,
+            "data": {"object": subscription},
+        }
+    )
+
+
+def _post_event(client, event_type, comic=None, **kwargs):
+    payload = _event(event_type, comic, **kwargs)
+    return client.post(
+        "/billing/webhook",
+        data=payload,
+        content_type="application/json",
+        HTTP_STRIPE_SIGNATURE=_signature(payload),
+    )
+
+
+@override_settings(**BILLING_SETTINGS)
+@pytest.mark.django_db
+def test_webhook_creates_active_plan(client):
+    _, comic = _comic_scene()
+    response = _post_event(client, "customer.subscription.created", comic)
+    assert response.status_code == 200
+    assert response.json() == {"received": True}
+    plan = ComicPlan.objects.get(comic=comic)
+    assert plan.status == PlanStatus.ACTIVE
+    assert plan.stripe_customer_id == "cus_1"
+    assert plan.stripe_subscription_id == "sub_1"
+    assert plan.quota_bytes == settings.MEDIA_STORAGE_QUOTA_BYTES
+    assert plan.current_period_end == datetime(2030, 1, 1, tzinfo=UTC)
+
+
+@override_settings(**BILLING_SETTINGS)
+@pytest.mark.django_db
+def test_webhook_maps_trialing_and_past_due(client):
+    _, comic = _comic_scene()
+    _post_event(client, "customer.subscription.created", comic, status="trialing")
+    assert ComicPlan.objects.get(comic=comic).status == PlanStatus.ACTIVE
+    _post_event(client, "customer.subscription.updated", comic, status="past_due")
+    assert ComicPlan.objects.get(comic=comic).status == PlanStatus.PAST_DUE
+    _post_event(client, "customer.subscription.updated", comic, status="canceled")
+    assert ComicPlan.objects.get(comic=comic).status == PlanStatus.PAST_DUE
+
+
+@override_settings(**BILLING_SETTINGS)
+@pytest.mark.django_db
+def test_webhook_deletion_marks_plan_past_due(client):
+    _, comic = _comic_scene()
+    _post_event(client, "customer.subscription.created", comic)
+    response = _post_event(
+        client,
+        "customer.subscription.deleted",
+        comic,
+        status="canceled",
+        subscription_id="sub_1",
+    )
+    assert response.status_code == 200
+    assert ComicPlan.objects.get(comic=comic).status == PlanStatus.PAST_DUE
+
+
+@override_settings(**BILLING_SETTINGS)
+@pytest.mark.django_db
+def test_webhook_preserves_quota_on_update(client):
+    _, comic = _comic_scene()
+    ComicPlan.objects.create(comic=comic, status=PlanStatus.ACTIVE, quota_bytes=12_345)
+    _post_event(client, "customer.subscription.updated", comic)
+    assert ComicPlan.objects.get(comic=comic).quota_bytes == 12_345
+
+
+@override_settings(**BILLING_SETTINGS)
+@pytest.mark.django_db
+def test_webhook_is_idempotent(client):
+    _, comic = _comic_scene()
+    _post_event(client, "customer.subscription.created", comic)
+    _post_event(client, "customer.subscription.created", comic)
+    assert ComicPlan.objects.filter(comic=comic).count() == 1
+
+
+@override_settings(**BILLING_SETTINGS)
+@pytest.mark.django_db
+def test_webhook_reads_period_end_from_subscription_items(client):
+    _, comic = _comic_scene()
+    payload = json.dumps(
+        {
+            "id": "evt_1",
+            "object": "event",
+            "type": "customer.subscription.created",
+            "data": {
+                "object": {
+                    "id": "sub_1",
+                    "object": "subscription",
+                    "customer": "cus_1",
+                    "status": "active",
+                    "metadata": {"comic_id": str(comic.id)},
+                    "items": {"data": [{"current_period_end": 1893456000}]},
+                }
+            },
+        }
+    )
+    response = client.post(
+        "/billing/webhook",
+        data=payload,
+        content_type="application/json",
+        HTTP_STRIPE_SIGNATURE=_signature(payload),
+    )
+    assert response.status_code == 200
+    assert ComicPlan.objects.get(comic=comic).current_period_end == datetime(
+        2030, 1, 1, tzinfo=UTC
+    )
+
+
+@override_settings(**BILLING_SETTINGS)
+@pytest.mark.django_db
+def test_webhook_rejects_bad_signature_without_writes(client):
+    _, comic = _comic_scene()
+    payload = _event("customer.subscription.created", comic)
+    response = client.post(
+        "/billing/webhook",
+        data=payload,
+        content_type="application/json",
+        HTTP_STRIPE_SIGNATURE="t=1,v1=deadbeef",
+    )
+    assert response.status_code == 400
+    assert response.json() == {"error": "invalid_signature"}
+    assert not ComicPlan.objects.filter(comic=comic).exists()
+
+
+@override_settings(**BILLING_SETTINGS)
+@pytest.mark.django_db
+def test_webhook_ignores_unknown_events_comics_and_metadata(client):
+    _, comic = _comic_scene()
+    assert _post_event(client, "invoice.paid", comic).status_code == 200
+    assert (
+        _post_event(
+            client,
+            "customer.subscription.created",
+            metadata={"comic_id": "not-a-uuid"},
+        ).status_code
+        == 200
+    )
+    assert (
+        _post_event(
+            client,
+            "customer.subscription.created",
+            metadata={"comic_id": str(uuid4())},
+        ).status_code
+        == 200
+    )
+    assert (
+        _post_event(client, "customer.subscription.created", metadata={}).status_code
+        == 200
+    )
+    assert not ComicPlan.objects.filter(comic=comic).exists()
+
+
+@override_settings(**{**BILLING_SETTINGS, "STRIPE_WEBHOOK_SECRET": ""})
+@pytest.mark.django_db
+def test_webhook_rejects_when_secret_is_unconfigured(client):
+    payload = _event("customer.subscription.created")
+    response = client.post(
+        "/billing/webhook",
+        data=payload,
+        content_type="application/json",
+        HTTP_STRIPE_SIGNATURE=_signature(payload, secret="anything"),
+    )
+    assert response.status_code == 400
+    assert response.json() == {"error": "invalid_signature"}
+
+
+@override_settings(**{**BILLING_SETTINGS, "BILLING_ENABLED": False})
+@pytest.mark.django_db
+def test_webhook_is_hidden_when_billing_disabled(client):
+    payload = _event("customer.subscription.created")
+    response = client.post(
+        "/billing/webhook",
+        data=payload,
+        content_type="application/json",
+        HTTP_STRIPE_SIGNATURE=_signature(payload),
+    )
+    assert response.status_code == 404
+
+
+@pytest.mark.django_db
+def test_plan_status_mapping_covers_known_statuses():
+    assert webhooks.plan_status_for("active") == PlanStatus.ACTIVE
+    assert webhooks.plan_status_for("trialing") == PlanStatus.ACTIVE
+    for status in (
+        "past_due",
+        "unpaid",
+        "incomplete",
+        "incomplete_expired",
+        "paused",
+        "canceled",
+        "unknown",
+    ):
+        assert webhooks.plan_status_for(status) == PlanStatus.PAST_DUE

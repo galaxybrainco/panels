@@ -4,9 +4,10 @@ from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.http import Http404, JsonResponse
 from django.shortcuts import get_object_or_404
+from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 
-from billing import services
+from billing import services, stripe_client, webhooks
 from comics.models import Comic
 
 
@@ -62,3 +63,20 @@ def portal(request, comic_id):
     except services.StripeError:
         return JsonResponse({"error": "stripe_error"}, status=502)
     return JsonResponse({"portal_url": url})
+
+
+@csrf_exempt
+@require_POST
+def webhook(request):
+    _require_enabled()
+    try:
+        event = stripe_client.construct_event(
+            request.body,
+            request.headers.get("Stripe-Signature", ""),
+            settings.STRIPE_WEBHOOK_SECRET,
+        )
+    except stripe_client.InvalidSignatureError:
+        return JsonResponse({"error": "invalid_signature"}, status=400)
+    if event["type"] in webhooks.SUBSCRIPTION_EVENTS:
+        webhooks.sync_subscription(event["data"]["object"])
+    return JsonResponse({"received": True})

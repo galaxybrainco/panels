@@ -33,3 +33,16 @@ def create_checkout_session(**kwargs):
 
 def create_portal_session(**kwargs):
     return _run(stripe.billing_portal.Session.create, **kwargs)
+
+
+class InvalidSignatureError(Exception):
+    pass
+
+
+def construct_event(payload, signature, secret):
+    if not secret:
+        raise InvalidSignatureError("missing webhook secret")
+    try:
+        return stripe.Webhook.construct_event(payload, signature, secret)
+    except (ValueError, stripe.SignatureVerificationError) as exc:
+        raise InvalidSignatureError(str(exc)) from exc
