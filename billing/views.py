@@ -22,9 +22,9 @@ def _interval(request):
     try:
         payload = json.loads(request.body)
     except ValueError as exc:
-        raise services.InvalidPayload from exc
+        raise services.InvalidPayloadError from exc
     if not isinstance(payload, dict):
-        raise services.InvalidPayload
+        raise services.InvalidPayloadError
     return payload.get("interval") or "month"
 
 
@@ -35,13 +35,13 @@ def checkout(request, comic_id):
     comic = get_object_or_404(Comic, pk=comic_id)
     try:
         url = services.start_checkout(comic, request.user, _interval(request))
-    except services.InvalidPayload:
+    except services.InvalidPayloadError:
         return JsonResponse({"error": "invalid_payload"}, status=400)
-    except services.InvalidInterval:
+    except services.InvalidIntervalError:
         return JsonResponse({"error": "invalid_interval"}, status=400)
-    except services.NotOwner:
+    except services.NotOwnerError:
         return JsonResponse({"error": "not_owner"}, status=403)
-    except services.AlreadySubscribed:
+    except services.AlreadySubscribedError:
         return JsonResponse({"error": "already_subscribed"}, status=409)
     except services.StripeError:
         return JsonResponse({"error": "stripe_error"}, status=502)

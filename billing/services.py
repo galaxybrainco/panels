@@ -5,27 +5,27 @@ from billing.models import BillingCustomer, ComicPlan, PlanStatus
 from comics.models import ComicRole
 
 
-class BillingDisabled(Exception):
+class BillingDisabledError(Exception):
     pass
 
 
-class NotOwner(Exception):
+class NotOwnerError(Exception):
     pass
 
 
-class AlreadySubscribed(Exception):
+class AlreadySubscribedError(Exception):
     pass
 
 
-class InvalidInterval(Exception):
+class InvalidIntervalError(Exception):
     pass
 
 
-class InvalidPayload(Exception):
+class InvalidPayloadError(Exception):
     pass
 
 
-class NoBillingAccount(Exception):
+class NoBillingAccountError(Exception):
     pass
 
 
@@ -51,21 +51,21 @@ def price_for(interval):
     elif interval == "year":
         price = settings.BILLING_PRICE_ANNUAL
     else:
-        raise InvalidInterval(interval)
+        raise InvalidIntervalError(interval)
     if not price:
         if interval == "year":
-            raise InvalidInterval(interval)
+            raise InvalidIntervalError(interval)
         raise StripeError("missing monthly price")
     return price
 
 
 def start_checkout(comic, user, interval="month"):
     if not settings.BILLING_ENABLED:
-        raise BillingDisabled
+        raise BillingDisabledError
     if not is_owner(comic, user):
-        raise NotOwner
+        raise NotOwnerError
     if ComicPlan.objects.filter(comic=comic, status=PlanStatus.ACTIVE).exists():
-        raise AlreadySubscribed
+        raise AlreadySubscribedError
     price = price_for(interval)
     existing = BillingCustomer.objects.filter(user=user).first()
     if existing is not None and existing.stripe_customer_id:
