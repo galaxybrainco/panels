@@ -18,4 +18,5 @@ urlpatterns = [
     path("", include("comics.urls")),
     path("", include("social.urls")),
     path("", include("memberships.urls")),
+    path("", include("billing.urls")),
 ]
