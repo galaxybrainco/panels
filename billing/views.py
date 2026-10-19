@@ -46,3 +46,19 @@ def checkout(request, comic_id):
     except services.StripeError:
         return JsonResponse({"error": "stripe_error"}, status=502)
     return JsonResponse({"checkout_url": url})
+
+
+@require_POST
+@login_required
+def portal(request, comic_id):
+    _require_enabled()
+    comic = get_object_or_404(Comic, pk=comic_id)
+    try:
+        url = services.open_portal(comic, request.user)
+    except services.NotOwnerError:
+        return JsonResponse({"error": "not_owner"}, status=403)
+    except services.NoBillingAccountError:
+        return JsonResponse({"error": "no_billing_account"}, status=409)
+    except services.StripeError:
+        return JsonResponse({"error": "stripe_error"}, status=502)
+    return JsonResponse({"portal_url": url})

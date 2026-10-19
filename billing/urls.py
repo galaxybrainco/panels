@@ -8,4 +8,9 @@ urlpatterns = [
         views.checkout,
         name="billing-checkout",
     ),
+    path(
+        "comics/<uuid:comic_id>/billing/portal",
+        views.portal,
+        name="billing-portal",
+    ),
 ]

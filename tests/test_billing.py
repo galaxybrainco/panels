@@ -238,3 +238,81 @@ def test_checkout_stripe_failure_returns_502_without_residue(client):
     assert response.status_code == 502
     assert response.json() == {"error": "stripe_error"}
     assert not BillingCustomer.objects.filter(user=owner).exists()
+
+
+@responses.activate
+@override_settings(**BILLING_SETTINGS)
+@pytest.mark.django_db
+def test_portal_returns_url_for_existing_customer(client):
+    owner, comic = _comic_scene()
+    BillingCustomer.objects.create(user=owner, stripe_customer_id="cus_123")
+    client.force_login(owner)
+    responses.add(
+        responses.POST,
+        f"{STRIPE_API}/billing_portal/sessions",
+        json={
+            "id": "bps_1",
+            "object": "billing_portal.session",
+            "url": "https://billing.stripe.test/bps_1",
+        },
+        status=200,
+    )
+
+    response = client.post(f"/comics/{comic.id}/billing/portal")
+
+    assert response.status_code == 200
+    assert response.json() == {"portal_url": "https://billing.stripe.test/bps_1"}
+    body = parse_qs(responses.calls[0].request.body)
+    assert body["customer"] == ["cus_123"]
+    assert body["return_url"] == ["https://panels.test/back"]
+
+
+@override_settings(**BILLING_SETTINGS)
+@pytest.mark.django_db
+def test_portal_without_customer_returns_409(client):
+    owner, comic = _comic_scene()
+    client.force_login(owner)
+    response = client.post(f"/comics/{comic.id}/billing/portal")
+    assert response.status_code == 409
+    assert response.json() == {"error": "no_billing_account"}
+
+
+@override_settings(**{**BILLING_SETTINGS, "BILLING_ENABLED": False})
+@pytest.mark.django_db
+def test_portal_is_hidden_when_billing_disabled(client):
+    owner, comic = _comic_scene()
+    client.force_login(owner)
+    response = client.post(f"/comics/{comic.id}/billing/portal")
+    assert response.status_code == 404
+
+
+@override_settings(**BILLING_SETTINGS)
+@pytest.mark.django_db
+def test_portal_rejects_non_owner(client):
+    _, comic = _comic_scene()
+    collaborator = _user()
+    ComicRole.objects.create(
+        comic=comic, user=collaborator, role=ComicRole.Role.EDITOR
+    )
+    client.force_login(collaborator)
+    response = client.post(f"/comics/{comic.id}/billing/portal")
+    assert response.status_code == 403
+    assert response.json() == {"error": "not_owner"}
+
+
+@responses.activate
+@override_settings(**BILLING_SETTINGS)
+@pytest.mark.django_db
+def test_portal_stripe_failure_returns_502(client):
+    owner, comic = _comic_scene()
+    BillingCustomer.objects.create(user=owner, stripe_customer_id="cus_123")
+    client.force_login(owner)
+    responses.add(
+        responses.POST,
+        f"{STRIPE_API}/billing_portal/sessions",
+        json={"error": {"message": "boom"}},
+        status=500,
+    )
+    response = client.post(f"/comics/{comic.id}/billing/portal")
+    assert response.status_code == 502
+    assert response.json() == {"error": "stripe_error"}

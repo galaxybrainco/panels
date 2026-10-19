@@ -90,3 +90,21 @@ def start_checkout(comic, user, interval="month"):
     except stripe_client.StripeRequestError as exc:
         raise StripeError(str(exc)) from exc
     return session.url
+
+
+def open_portal(comic, user):
+    if not settings.BILLING_ENABLED:
+        raise BillingDisabledError
+    if not is_owner(comic, user):
+        raise NotOwnerError
+    account = BillingCustomer.objects.filter(user=user).first()
+    if account is None or not account.stripe_customer_id:
+        raise NoBillingAccountError
+    try:
+        session = stripe_client.create_portal_session(
+            customer=account.stripe_customer_id,
+            return_url=settings.BILLING_PORTAL_RETURN_URL,
+        )
+    except stripe_client.StripeRequestError as exc:
+        raise StripeError(str(exc)) from exc
+    return session.url
