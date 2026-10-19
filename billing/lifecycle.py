@@ -4,7 +4,7 @@ from django.conf import settings
 from django.utils import timezone
 
 from billing import notifications
-from billing.models import PlanStatus
+from billing.models import ComicPlan, PlanStatus
 
 ACTIVE = PlanStatus.ACTIVE
 PAST_DUE = PlanStatus.PAST_DUE
@@ -45,3 +45,22 @@ def apply_status(plan, new_status, now=None):
         plan.save(update_fields=["status"])
         return True
     return False
+
+
+def freeze_due_plans(now=None):
+    now = now or timezone.now()
+    frozen = 0
+    for plan in ComicPlan.objects.filter(status=PAST_DUE, grace_until__lte=now):
+        if apply_status(plan, FROZEN, now):
+            frozen += 1
+    return frozen
+
+
+def archive_old_plans(now=None):
+    now = now or timezone.now()
+    cutoff = now - timedelta(days=settings.BILLING_ARCHIVE_AFTER_DAYS)
+    archived = 0
+    for plan in ComicPlan.objects.filter(status=FROZEN, frozen_at__lte=cutoff):
+        if apply_status(plan, ARCHIVED, now):
+            archived += 1
+    return archived

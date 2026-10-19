@@ -8,6 +8,7 @@ from uuid import uuid4
 import pytest
 from django.contrib.auth import get_user_model
 from django.core import mail
+from django.core.management import call_command
 from django.test import override_settings
 from django.utils import timezone
 
@@ -308,3 +309,71 @@ def test_invoice_for_unknown_subscription_is_ignored(client):
     )
     assert response.status_code == 200
     assert ComicPlan.objects.count() == 0
+
+
+@override_settings(**BILLING_LIFECYCLE)
+@pytest.mark.django_db
+def test_command_freezes_expired_grace_and_emails(capsys):
+    owner, _, plan = _scene(
+        PlanStatus.PAST_DUE, grace_until=timezone.now() - timedelta(seconds=1)
+    )
+    call_command("enforce_plan_lifecycle")
+    plan.refresh_from_db()
+    assert plan.status == PlanStatus.FROZEN
+    assert plan.frozen_at is not None
+    assert len(mail.outbox) == 1
+    assert mail.outbox[0].to == [owner.email]
+    assert "Froze 1" in capsys.readouterr().out
+
+
+@override_settings(**BILLING_LIFECYCLE)
+@pytest.mark.django_db
+def test_command_leaves_unexpired_and_null_grace_alone():
+    _, _, live = _scene(
+        PlanStatus.PAST_DUE, grace_until=timezone.now() + timedelta(days=1)
+    )
+    _, _, legacy = _scene(PlanStatus.PAST_DUE)
+    call_command("enforce_plan_lifecycle")
+    live.refresh_from_db()
+    legacy.refresh_from_db()
+    assert live.status == PlanStatus.PAST_DUE
+    assert legacy.status == PlanStatus.PAST_DUE
+    assert mail.outbox == []
+
+
+@override_settings(**BILLING_LIFECYCLE)
+@pytest.mark.django_db
+def test_command_archives_old_frozen_plans(capsys):
+    _, _, plan = _scene(
+        PlanStatus.FROZEN, frozen_at=timezone.now() - timedelta(days=91)
+    )
+    call_command("enforce_plan_lifecycle")
+    plan.refresh_from_db()
+    assert plan.status == PlanStatus.ARCHIVED
+    assert mail.outbox == []
+    assert "archived 1" in capsys.readouterr().out
+
+
+@override_settings(**BILLING_LIFECYCLE)
+@pytest.mark.django_db
+def test_command_keeps_young_frozen_plans():
+    _, _, plan = _scene(
+        PlanStatus.FROZEN, frozen_at=timezone.now() - timedelta(days=10)
+    )
+    call_command("enforce_plan_lifecycle")
+    plan.refresh_from_db()
+    assert plan.status == PlanStatus.FROZEN
+
+
+@override_settings(**BILLING_LIFECYCLE)
+@pytest.mark.django_db
+def test_command_is_idempotent():
+    _, _, plan = _scene(
+        PlanStatus.PAST_DUE, grace_until=timezone.now() - timedelta(days=1)
+    )
+    call_command("enforce_plan_lifecycle")
+    mail.outbox.clear()
+    call_command("enforce_plan_lifecycle")
+    plan.refresh_from_db()
+    assert plan.status == PlanStatus.FROZEN
+    assert mail.outbox == []
