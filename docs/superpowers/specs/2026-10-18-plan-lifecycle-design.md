@@ -80,9 +80,11 @@ still gets its grace window and notice.
 - `customer.subscription.created|updated|deleted`: update ids and
   `current_period_end`, then call `apply_status` with the mapped status.
 - New `invoice.payment_failed` (in `PAYMENT_EVENTS`): resolve the subscription
-  id from the invoice (string or expanded object), find the plan by
-  `stripe_subscription_id`, and call `apply_status(plan, PAST_DUE)`. Unknown
-  invoices or plans are ignored with 200.
+  id from the invoice's top-level `subscription` (legacy) or
+  `parent.subscription_details.subscription` (current API), in string or
+  expanded form; find the plan by `stripe_subscription_id` and call
+  `apply_status(plan, PAST_DUE)`. Unknown invoices or plans are ignored with
+  200.
 - Payment success is not a new event: Stripe's subscription update to
   `active`/`trialing` restores the plan.
 - Replays and repeated failures are harmless: notices fire only when the
