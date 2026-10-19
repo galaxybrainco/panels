@@ -61,17 +61,20 @@ def sync_subscription(subscription):
         customer = _get(customer, "id")
     subscription_id = _get(subscription, "id")
     period_end = _period_end(subscription)
-    plan = ComicPlan.objects.filter(comic=comic).first()
-    if plan is None:
-        return ComicPlan.objects.create(
-            comic=comic,
-            status=plan_status_for(_get(subscription, "status")),
-            quota_bytes=settings.MEDIA_STORAGE_QUOTA_BYTES,
-            stripe_customer_id=customer or "",
-            stripe_subscription_id=subscription_id or "",
-            current_period_end=period_end,
-        )
-    plan.status = plan_status_for(_get(subscription, "status"))
+    status = plan_status_for(_get(subscription, "status"))
+    plan, created = ComicPlan.objects.get_or_create(
+        comic=comic,
+        defaults={
+            "status": status,
+            "quota_bytes": settings.MEDIA_STORAGE_QUOTA_BYTES,
+            "stripe_customer_id": customer or "",
+            "stripe_subscription_id": subscription_id or "",
+            "current_period_end": period_end,
+        },
+    )
+    if created:
+        return plan
+    plan.status = status
     plan.stripe_customer_id = customer or plan.stripe_customer_id
     plan.stripe_subscription_id = subscription_id or plan.stripe_subscription_id
     if period_end is not None:

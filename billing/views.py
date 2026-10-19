@@ -1,4 +1,5 @@
 import json
+from functools import wraps
 
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
@@ -11,9 +12,14 @@ from billing import services, stripe_client, webhooks
 from comics.models import Comic
 
 
-def _require_enabled():
-    if not settings.BILLING_ENABLED:
-        raise Http404
+def billing_enabled(view):
+    @wraps(view)
+    def wrapped(request, *args, **kwargs):
+        if not settings.BILLING_ENABLED:
+            raise Http404
+        return view(request, *args, **kwargs)
+
+    return wrapped
 
 
 def _interval(request):
@@ -29,10 +35,10 @@ def _interval(request):
     return payload.get("interval") or "month"
 
 
+@billing_enabled
 @require_POST
 @login_required
 def checkout(request, comic_id):
-    _require_enabled()
     comic = get_object_or_404(Comic, pk=comic_id)
     try:
         url = services.start_checkout(comic, request.user, _interval(request))
@@ -49,10 +55,10 @@ def checkout(request, comic_id):
     return JsonResponse({"checkout_url": url})
 
 
+@billing_enabled
 @require_POST
 @login_required
 def portal(request, comic_id):
-    _require_enabled()
     comic = get_object_or_404(Comic, pk=comic_id)
     try:
         url = services.open_portal(comic, request.user)
@@ -65,10 +71,10 @@ def portal(request, comic_id):
     return JsonResponse({"portal_url": url})
 
 
+@billing_enabled
 @csrf_exempt
 @require_POST
 def webhook(request):
-    _require_enabled()
     try:
         event = stripe_client.construct_event(
             request.body,

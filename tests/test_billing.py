@@ -548,3 +548,128 @@ def test_plan_status_mapping_covers_known_statuses():
         "unknown",
     ):
         assert webhooks.plan_status_for(status) == PlanStatus.PAST_DUE
+
+
+@responses.activate
+@override_settings(**BILLING_SETTINGS)
+@pytest.mark.django_db
+def test_checkout_two_owners_each_get_a_customer(client):
+    owner_a = _user()
+    comic_a = create_comic(owner_a, f"comic{uuid4().hex[:6]}", "One")
+    owner_b = _user()
+    comic_b = create_comic(owner_b, f"comic{uuid4().hex[:6]}", "Two")
+    for customer_id, session_id in (("cus_a", "cs_a"), ("cus_b", "cs_b")):
+        responses.add(
+            responses.POST,
+            f"{STRIPE_API}/customers",
+            json={"id": customer_id, "object": "customer"},
+            status=200,
+        )
+        responses.add(
+            responses.POST,
+            f"{STRIPE_API}/checkout/sessions",
+            json={
+                "id": session_id,
+                "object": "checkout.session",
+                "url": f"https://checkout.stripe.test/{session_id}",
+            },
+            status=200,
+        )
+
+    client.force_login(owner_a)
+    assert client.post(f"/comics/{comic_a.id}/billing/checkout").status_code == 200
+    client.force_login(owner_b)
+    assert client.post(f"/comics/{comic_b.id}/billing/checkout").status_code == 200
+
+    assert BillingCustomer.objects.get(user=owner_a).stripe_customer_id == "cus_a"
+    assert BillingCustomer.objects.get(user=owner_b).stripe_customer_id == "cus_b"
+
+
+@responses.activate
+@override_settings(**BILLING_SETTINGS)
+@pytest.mark.django_db
+def test_checkout_succeeds_with_a_stale_blank_customer_row(client):
+    owner, comic = _comic_scene()
+    BillingCustomer.objects.create(user=_user(), stripe_customer_id="")
+    client.force_login(owner)
+    responses.add(
+        responses.POST,
+        f"{STRIPE_API}/customers",
+        json={"id": "cus_123", "object": "customer"},
+        status=200,
+    )
+    responses.add(
+        responses.POST,
+        f"{STRIPE_API}/checkout/sessions",
+        json=_session_response(),
+        status=200,
+    )
+
+    response = client.post(f"/comics/{comic.id}/billing/checkout")
+
+    assert response.status_code == 200
+    assert BillingCustomer.objects.get(user=owner).stripe_customer_id == "cus_123"
+
+
+@responses.activate
+@override_settings(**BILLING_SETTINGS)
+@pytest.mark.django_db
+def test_checkout_fills_blank_customer_id(client):
+    owner, comic = _comic_scene()
+    BillingCustomer.objects.create(user=owner, stripe_customer_id="")
+    client.force_login(owner)
+    responses.add(
+        responses.POST,
+        f"{STRIPE_API}/customers",
+        json={"id": "cus_123", "object": "customer"},
+        status=200,
+    )
+    responses.add(
+        responses.POST,
+        f"{STRIPE_API}/checkout/sessions",
+        json=_session_response(),
+        status=200,
+    )
+
+    response = client.post(f"/comics/{comic.id}/billing/checkout")
+
+    assert response.status_code == 200
+    account = BillingCustomer.objects.get(user=owner)
+    assert account.stripe_customer_id == "cus_123"
+
+
+@pytest.mark.django_db
+def test_sync_handles_plan_created_after_read(monkeypatch):
+    _, comic = _comic_scene()
+    ComicPlan.objects.create(comic=comic, status=PlanStatus.PAST_DUE, quota_bytes=99)
+    real_filter = ComicPlan.objects.filter
+
+    class NoPlan:
+        def first(self):
+            return None
+
+    monkeypatch.setattr(ComicPlan.objects, "filter", lambda *a, **k: NoPlan())
+    webhooks.sync_subscription(
+        {
+            "id": "sub_1",
+            "object": "subscription",
+            "customer": "cus_1",
+            "status": "active",
+            "metadata": {"comic_id": str(comic.id)},
+        }
+    )
+    monkeypatch.setattr(ComicPlan.objects, "filter", real_filter)
+    plan = ComicPlan.objects.get(comic=comic)
+    assert plan.status == PlanStatus.ACTIVE
+    assert plan.quota_bytes == 99
+
+
+@override_settings(**{**BILLING_SETTINGS, "BILLING_ENABLED": False})
+@pytest.mark.django_db
+def test_disabled_billing_hides_urls_before_auth_and_method(client):
+    _, comic = _comic_scene()
+    assert client.post(f"/comics/{comic.id}/billing/checkout").status_code == 404
+    assert client.get(f"/comics/{comic.id}/billing/checkout").status_code == 404
+    assert client.post(f"/comics/{comic.id}/billing/portal").status_code == 404
+    assert client.get(f"/comics/{comic.id}/billing/portal").status_code == 404
+    assert client.get("/billing/webhook").status_code == 404

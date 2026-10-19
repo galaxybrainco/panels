@@ -1,4 +1,5 @@
 from django.conf import settings
+from django.db import IntegrityError
 
 from billing import stripe_client
 from billing.models import BillingCustomer, ComicPlan, PlanStatus
@@ -39,9 +40,16 @@ def is_owner(comic, user):
 
 def get_or_create_customer(user):
     customer = stripe_client.create_customer(user)
-    account, _ = BillingCustomer.objects.get_or_create(user=user)
-    account.stripe_customer_id = customer.id
-    account.save(update_fields=["stripe_customer_id"])
+    try:
+        account, created = BillingCustomer.objects.get_or_create(
+            user=user, defaults={"stripe_customer_id": customer.id}
+        )
+    except IntegrityError:
+        account = BillingCustomer.objects.get(user=user)
+        created = False
+    if not created and not account.stripe_customer_id:
+        account.stripe_customer_id = customer.id
+        account.save(update_fields=["stripe_customer_id"])
     return account
 
 
