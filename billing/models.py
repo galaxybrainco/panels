@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.db import models
 
 from core.models import UUIDModel
@@ -29,3 +30,18 @@ class ComicPlan(UUIDModel):
 
     def __str__(self):
         return f"Plan({self.comic}:{self.status})"
+
+
+class BillingCustomer(UUIDModel):
+    """A Stripe customer owned by one user, shared by all their comics."""
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="billing_customer",
+    )
+    stripe_customer_id = models.CharField(max_length=255, unique=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.user} @ {self.stripe_customer_id}"
