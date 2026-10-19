@@ -85,4 +85,6 @@ def webhook(request):
         return JsonResponse({"error": "invalid_signature"}, status=400)
     if event["type"] in webhooks.SUBSCRIPTION_EVENTS:
         webhooks.sync_subscription(event["data"]["object"])
+    elif event["type"] in webhooks.PAYMENT_EVENTS:
+        webhooks.handle_payment_failed(event["data"]["object"])
     return JsonResponse({"received": True})
