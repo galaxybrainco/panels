@@ -4,6 +4,8 @@ import pytest
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 
+from billing.models import ComicPlan, PlanStatus
+from comics.publishing import publish_page
 from comics.services import create_comic, create_page, create_series
 from media.quota import comic_storage_bytes, ensure_within_quota
 from media.services import add_media, remove_media
@@ -72,3 +74,63 @@ def test_quota_boundary_allows_exact_fit(settings):
     size = len(upload().read())
     settings.MEDIA_STORAGE_QUOTA_BYTES = size
     ensure_within_quota(comic, size)
+
+
+def _plan(comic, status, quota_bytes=10 * 1024**3):
+    return ComicPlan.objects.create(comic=comic, status=status, quota_bytes=quota_bytes)
+
+
+@pytest.mark.django_db
+def test_past_due_plan_can_still_upload():
+    owner, comic, page = scene()
+    _plan(comic, PlanStatus.PAST_DUE)
+    assert add_media(owner, page, upload()) is not None
+
+
+@pytest.mark.django_db
+def test_frozen_plan_rejects_new_uploads():
+    owner, comic, page = scene()
+    _plan(comic, PlanStatus.FROZEN)
+    with pytest.raises(ValidationError) as exc:
+        add_media(owner, page, upload())
+    assert "read-only" in " ".join(exc.value.message_dict["file"])
+
+
+@pytest.mark.django_db
+def test_archived_plan_rejects_new_uploads():
+    owner, comic, page = scene()
+    _plan(comic, PlanStatus.ARCHIVED)
+    with pytest.raises(ValidationError):
+        add_media(owner, page, upload())
+
+
+@pytest.mark.django_db
+def test_frozen_plan_still_allows_media_removal():
+    owner, comic, page = scene()
+    plan = _plan(comic, PlanStatus.ACTIVE)
+    media = add_media(owner, page, upload())
+    plan.status = PlanStatus.FROZEN
+    plan.save(update_fields=["status"])
+    remove_media(owner, media)
+    assert comic_storage_bytes(comic) == 0
+
+
+@pytest.mark.django_db
+def test_frozen_plan_still_serves_published_pages(client):
+    owner, comic, page = scene()
+    plan = _plan(comic, PlanStatus.ACTIVE)
+    add_media(owner, page, upload(), alt_text="Panel")
+    publish_page(owner, page)
+    plan.status = PlanStatus.FROZEN
+    plan.save(update_fields=["status"])
+    response = client.get(f"/pages/{page.id}")
+    assert response.status_code == 200
+
+
+@pytest.mark.django_db
+def test_past_due_plan_keeps_its_quota():
+    _, comic, _ = scene()
+    _plan(comic, PlanStatus.PAST_DUE, quota_bytes=222)
+    from media.quota import comic_storage_quota
+
+    assert comic_storage_quota(comic) == 222
