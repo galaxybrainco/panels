@@ -377,3 +377,92 @@ def test_command_is_idempotent():
     plan.refresh_from_db()
     assert plan.status == PlanStatus.FROZEN
     assert mail.outbox == []
+
+
+@override_settings(**WEBHOOK_SETTINGS)
+@pytest.mark.django_db
+def test_invoice_payment_failed_reads_current_stripe_shape(client):
+    owner, comic, _ = _scene()
+    comic.plan.delete()
+    _active_plan(client, comic)
+    mail.outbox.clear()
+    invoice = {
+        "id": "in_1",
+        "object": "invoice",
+        "parent": {"subscription_details": {"subscription": "sub_1"}},
+    }
+
+    response = _post_event(client, "invoice.payment_failed", invoice)
+
+    assert response.status_code == 200
+    plan = ComicPlan.objects.get(comic=comic)
+    assert plan.status == PlanStatus.PAST_DUE
+    assert len(mail.outbox) == 1
+    assert mail.outbox[0].to == [owner.email]
+
+
+@override_settings(**WEBHOOK_SETTINGS)
+@pytest.mark.django_db
+def test_invoice_payment_failed_reads_expanded_current_shape(client):
+    _, comic, _ = _scene()
+    comic.plan.delete()
+    _active_plan(client, comic)
+    invoice = {
+        "id": "in_1",
+        "object": "invoice",
+        "parent": {
+            "subscription_details": {"subscription": {"id": "sub_1"}},
+        },
+    }
+
+    _post_event(client, "invoice.payment_failed", invoice)
+
+    assert ComicPlan.objects.get(comic=comic).status == PlanStatus.PAST_DUE
+
+
+@override_settings(**BILLING_LIFECYCLE)
+@pytest.mark.django_db
+def test_stale_instance_does_not_email_twice_or_extend_grace():
+    _, _, plan = _scene()
+    stale = ComicPlan.objects.get(pk=plan.pk)
+    assert lifecycle.apply_status(plan, PlanStatus.PAST_DUE) is True
+    plan.refresh_from_db()
+    first = plan.grace_until
+
+    assert lifecycle.apply_status(stale, PlanStatus.PAST_DUE) is False
+    plan.refresh_from_db()
+    assert plan.grace_until == first
+    assert len(mail.outbox) == 1
+
+
+@override_settings(**BILLING_LIFECYCLE)
+@pytest.mark.django_db
+def test_past_due_without_grace_gets_one_on_next_failure():
+    _, _, plan = _scene(PlanStatus.PAST_DUE)
+    assert lifecycle.apply_status(plan, PlanStatus.PAST_DUE) is True
+    plan.refresh_from_db()
+    assert plan.grace_until is not None
+    assert len(mail.outbox) == 1
+
+
+@override_settings(**BILLING_LIFECYCLE)
+@pytest.mark.django_db
+def test_freeze_sweep_skips_plan_restored_after_query(monkeypatch):
+    _, _, plan = _scene(PlanStatus.ACTIVE)
+    monkeypatch.setattr(lifecycle, "_due_plan_ids", lambda now: [plan.pk])
+    assert lifecycle.freeze_due_plans() == 0
+    plan.refresh_from_db()
+    assert plan.status == PlanStatus.ACTIVE
+    assert mail.outbox == []
+
+
+@override_settings(**BILLING_LIFECYCLE)
+@pytest.mark.django_db
+def test_archive_sweep_skips_plan_restored_after_query(monkeypatch):
+    _, _, plan = _scene(
+        PlanStatus.PAST_DUE, grace_until=timezone.now() + timedelta(days=1)
+    )
+    monkeypatch.setattr(lifecycle, "_stale_frozen_ids", lambda now: [plan.pk])
+    assert lifecycle.archive_old_plans() == 0
+    plan.refresh_from_db()
+    assert plan.status == PlanStatus.PAST_DUE

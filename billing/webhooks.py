@@ -90,10 +90,19 @@ def sync_subscription(subscription):
     return plan
 
 
-def handle_payment_failed(invoice):
+def _invoice_subscription(invoice):
     subscription = _get(invoice, "subscription")
+    if subscription is None:
+        parent = _get(invoice, "parent") or {}
+        details = _get(parent, "subscription_details") or {}
+        subscription = _get(details, "subscription")
     if not isinstance(subscription, str):
         subscription = _get(subscription, "id")
+    return subscription
+
+
+def handle_payment_failed(invoice):
+    subscription = _invoice_subscription(invoice)
     if not subscription:
         return None
     plan = ComicPlan.objects.filter(stripe_subscription_id=subscription).first()
