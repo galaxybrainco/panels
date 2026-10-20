@@ -27,6 +27,8 @@ class ComicPlan(UUIDModel):
     stripe_customer_id = models.CharField(max_length=255, blank=True, default="")
     stripe_subscription_id = models.CharField(max_length=255, blank=True, default="")
     current_period_end = models.DateTimeField(null=True, blank=True)
+    grace_until = models.DateTimeField(null=True, blank=True)
+    frozen_at = models.DateTimeField(null=True, blank=True)
 
     def __str__(self):
         return f"Plan({self.comic}:{self.status})"

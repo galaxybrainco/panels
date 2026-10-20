@@ -3,6 +3,7 @@ from uuid import UUID
 
 from django.conf import settings
 
+from billing import lifecycle
 from billing.models import ComicPlan, PlanStatus
 from comics.models import Comic
 
@@ -11,6 +12,8 @@ SUBSCRIPTION_EVENTS = {
     "customer.subscription.updated",
     "customer.subscription.deleted",
 }
+
+PAYMENT_EVENTS = {"invoice.payment_failed"}
 
 ACTIVE_STATUSES = {"active", "trialing"}
 
@@ -65,26 +68,45 @@ def sync_subscription(subscription):
     plan, created = ComicPlan.objects.get_or_create(
         comic=comic,
         defaults={
-            "status": status,
             "quota_bytes": settings.MEDIA_STORAGE_QUOTA_BYTES,
             "stripe_customer_id": customer or "",
             "stripe_subscription_id": subscription_id or "",
             "current_period_end": period_end,
         },
     )
-    if created:
-        return plan
-    plan.status = status
-    plan.stripe_customer_id = customer or plan.stripe_customer_id
-    plan.stripe_subscription_id = subscription_id or plan.stripe_subscription_id
-    if period_end is not None:
-        plan.current_period_end = period_end
-    plan.save(
-        update_fields=[
-            "status",
-            "stripe_customer_id",
-            "stripe_subscription_id",
-            "current_period_end",
-        ]
-    )
+    if not created:
+        plan.stripe_customer_id = customer or plan.stripe_customer_id
+        plan.stripe_subscription_id = subscription_id or plan.stripe_subscription_id
+        if period_end is not None:
+            plan.current_period_end = period_end
+        plan.save(
+            update_fields=[
+                "stripe_customer_id",
+                "stripe_subscription_id",
+                "current_period_end",
+            ]
+        )
+    lifecycle.apply_status(plan, status)
+    return plan
+
+
+def _invoice_subscription(invoice):
+    subscription = _get(invoice, "subscription")
+    if subscription is None:
+        parent = _get(invoice, "parent") or {}
+        details = _get(parent, "subscription_details") or {}
+        subscription = _get(details, "subscription")
+    if not isinstance(subscription, str):
+        subscription = _get(subscription, "id")
+    return subscription
+
+
+def handle_payment_failed(invoice):
+    subscription = _invoice_subscription(invoice)
+    if not subscription:
+        return None
+    plan = ComicPlan.objects.filter(stripe_subscription_id=subscription).first()
+    if plan is None:
+        return None
+    lifecycle.apply_status(plan, PlanStatus.PAST_DUE)
     return plan
