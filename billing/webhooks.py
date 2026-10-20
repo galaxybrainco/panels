@@ -1,10 +1,9 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
-from django.conf import settings
-
-from billing import lifecycle
+from billing import lifecycle, quota
 from billing.models import ComicPlan, PlanStatus
+from billing.objects import get_field
 from comics.models import Comic
 
 SUBSCRIPTION_EVENTS = {
@@ -18,13 +17,7 @@ PAYMENT_EVENTS = {"invoice.payment_failed"}
 ACTIVE_STATUSES = {"active", "trialing"}
 
 
-def _get(obj, key, default=None):
-    if isinstance(obj, dict):
-        return obj.get(key, default)
-    try:
-        return obj[key]
-    except KeyError, TypeError:
-        return default
+_get = get_field
 
 
 def plan_status_for(status):
@@ -65,22 +58,29 @@ def sync_subscription(subscription):
     subscription_id = _get(subscription, "id")
     period_end = _period_end(subscription)
     status = plan_status_for(_get(subscription, "status"))
+    addon_item_id, _ = quota.addon_item(subscription)
+    plan_quota = quota.quota_bytes_for(subscription)
     plan, created = ComicPlan.objects.get_or_create(
         comic=comic,
         defaults={
-            "quota_bytes": settings.MEDIA_STORAGE_QUOTA_BYTES,
+            "quota_bytes": plan_quota,
+            "stripe_addon_item_id": addon_item_id,
             "stripe_customer_id": customer or "",
             "stripe_subscription_id": subscription_id or "",
             "current_period_end": period_end,
         },
     )
     if not created:
+        plan.quota_bytes = plan_quota
+        plan.stripe_addon_item_id = addon_item_id
         plan.stripe_customer_id = customer or plan.stripe_customer_id
         plan.stripe_subscription_id = subscription_id or plan.stripe_subscription_id
         if period_end is not None:
             plan.current_period_end = period_end
         plan.save(
             update_fields=[
+                "quota_bytes",
+                "stripe_addon_item_id",
                 "stripe_customer_id",
                 "stripe_subscription_id",
                 "current_period_end",
