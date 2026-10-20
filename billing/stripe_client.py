@@ -10,10 +10,10 @@ class StripeRequestError(Exception):
     pass
 
 
-def _run(call, **kwargs):
+def _run(call, *args, **kwargs):
     stripe.api_key = settings.STRIPE_SECRET_KEY
     try:
-        return call(**kwargs)
+        return call(*args, **kwargs)
     except stripe.StripeError as exc:
         logger.warning("Stripe request failed: %s", exc)
         raise StripeRequestError(str(exc)) from exc
@@ -46,3 +46,19 @@ def construct_event(payload, signature, secret):
         return stripe.Webhook.construct_event(payload, signature, secret)
     except (ValueError, stripe.SignatureVerificationError) as exc:
         raise InvalidSignatureError(str(exc)) from exc
+
+
+def retrieve_subscription(subscription_id):
+    return _run(stripe.Subscription.retrieve, subscription_id)
+
+
+def create_subscription_item(**kwargs):
+    return _run(stripe.SubscriptionItem.create, **kwargs)
+
+
+def modify_subscription_item(item_id, **kwargs):
+    return _run(stripe.SubscriptionItem.modify, item_id, **kwargs)
+
+
+def delete_subscription_item(item_id):
+    return _run(stripe.SubscriptionItem.delete, item_id)

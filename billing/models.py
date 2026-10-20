@@ -26,6 +26,7 @@ class ComicPlan(UUIDModel):
     quota_bytes = models.PositiveBigIntegerField()
     stripe_customer_id = models.CharField(max_length=255, blank=True, default="")
     stripe_subscription_id = models.CharField(max_length=255, blank=True, default="")
+    stripe_addon_item_id = models.CharField(max_length=255, blank=True, default="")
     current_period_end = models.DateTimeField(null=True, blank=True)
     grace_until = models.DateTimeField(null=True, blank=True)
     frozen_at = models.DateTimeField(null=True, blank=True)

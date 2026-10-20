@@ -1,7 +1,7 @@
 from django.conf import settings
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
 
-from billing import stripe_client
+from billing import quota, stripe_client
 from billing.models import BillingCustomer, ComicPlan, PlanStatus
 from comics.models import ComicRole
 
@@ -27,6 +27,18 @@ class InvalidPayloadError(Exception):
 
 
 class NoBillingAccountError(Exception):
+    pass
+
+
+class InvalidUnitsError(Exception):
+    pass
+
+
+class AddonsUnavailableError(Exception):
+    pass
+
+
+class NoSubscriptionError(Exception):
     pass
 
 
@@ -67,14 +79,30 @@ def price_for(interval):
     return price
 
 
-def start_checkout(comic, user, interval="month"):
+def validate_units(units):
+    if isinstance(units, bool) or not isinstance(units, int):
+        raise InvalidUnitsError
+    if units < 0 or units > settings.BILLING_STORAGE_ADDON_MAX_UNITS:
+        raise InvalidUnitsError
+    return units
+
+
+def start_checkout(comic, user, interval="month", addon_units=0):
     if not settings.BILLING_ENABLED:
         raise BillingDisabledError
     if not is_owner(comic, user):
         raise NotOwnerError
+    addon_units = validate_units(addon_units)
+    if addon_units and not settings.BILLING_STORAGE_ADDON_PRICE:
+        raise AddonsUnavailableError
     if ComicPlan.objects.filter(comic=comic, status=PlanStatus.ACTIVE).exists():
         raise AlreadySubscribedError
     price = price_for(interval)
+    line_items = [{"price": price, "quantity": 1}]
+    if addon_units:
+        line_items.append(
+            {"price": settings.BILLING_STORAGE_ADDON_PRICE, "quantity": addon_units}
+        )
     existing = BillingCustomer.objects.filter(user=user).first()
     if existing is not None and existing.stripe_customer_id:
         account = existing
@@ -87,7 +115,7 @@ def start_checkout(comic, user, interval="month"):
         session = stripe_client.create_checkout_session(
             mode="subscription",
             customer=account.stripe_customer_id,
-            line_items=[{"price": price, "quantity": 1}],
+            line_items=line_items,
             success_url=settings.BILLING_SUCCESS_URL,
             cancel_url=settings.BILLING_CANCEL_URL,
             client_reference_id=str(comic.id),
@@ -116,3 +144,64 @@ def open_portal(comic, user):
     except stripe_client.StripeRequestError as exc:
         raise StripeError(str(exc)) from exc
     return session.url
+
+
+def _save_item_id(plan, item_id):
+    if plan.stripe_addon_item_id != item_id:
+        plan.stripe_addon_item_id = item_id
+        plan.save(update_fields=["stripe_addon_item_id", "updated_at"])
+
+
+def _resolve_addon_items(plan):
+    subscription = stripe_client.retrieve_subscription(plan.stripe_subscription_id)
+    item_ids = quota.addon_item_ids(subscription)
+    _save_item_id(plan, item_ids[0] if item_ids else "")
+    return item_ids
+
+
+def _apply_addon_units(plan, price, units, refresh=False):
+    if units == 0:
+        for item_id in _resolve_addon_items(plan):
+            stripe_client.delete_subscription_item(item_id)
+        _save_item_id(plan, "")
+        return
+    if refresh or not plan.stripe_addon_item_id:
+        _resolve_addon_items(plan)
+    if plan.stripe_addon_item_id:
+        stripe_client.modify_subscription_item(
+            plan.stripe_addon_item_id, quantity=units
+        )
+    else:
+        item = stripe_client.create_subscription_item(
+            subscription=plan.stripe_subscription_id,
+            price=price,
+            quantity=units,
+        )
+        _save_item_id(plan, item.id)
+
+
+def set_addon_units(comic, user, units):
+    if not settings.BILLING_ENABLED:
+        raise BillingDisabledError
+    if not is_owner(comic, user):
+        raise NotOwnerError
+    units = validate_units(units)
+    price = settings.BILLING_STORAGE_ADDON_PRICE
+    if not price:
+        raise AddonsUnavailableError
+    with transaction.atomic():
+        plan = ComicPlan.objects.select_for_update().filter(comic=comic).first()
+        if (
+            plan is None
+            or not plan.stripe_subscription_id
+            or plan.status not in (PlanStatus.ACTIVE, PlanStatus.PAST_DUE)
+        ):
+            raise NoSubscriptionError
+        try:
+            _apply_addon_units(plan, price, units)
+        except stripe_client.StripeRequestError:
+            try:
+                _apply_addon_units(plan, price, units, refresh=True)
+            except stripe_client.StripeRequestError as retry_exc:
+                raise StripeError(str(retry_exc)) from retry_exc
+    return units
