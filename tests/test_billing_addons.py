@@ -287,6 +287,7 @@ def test_addons_creates_item_when_none_exists(client):
 
     assert response.status_code == 200
     assert response.json() == {"units": 3}
+    assert ComicPlan.objects.get(comic=comic).stripe_addon_item_id == "si_new"
     body = parse_qs(responses.calls[1].request.body)
     assert body["subscription"] == ["sub_1"]
     assert body["price"] == [ADDON_PRICE]
@@ -321,10 +322,22 @@ def test_addons_modifies_stored_item(client):
 @responses.activate
 @override_settings(**ADDON_SETTINGS)
 @pytest.mark.django_db
-def test_addons_zero_deletes_item(client):
+def test_addons_zero_deletes_item_and_clears_id(client):
     owner, comic = _scene()
     _subscribed_plan(comic, stripe_addon_item_id="si_add")
     client.force_login(owner)
+    responses.add(
+        responses.GET,
+        f"{STRIPE_API}/subscriptions/sub_1",
+        json={
+            "id": "sub_1",
+            "object": "subscription",
+            "items": {
+                "data": [{"id": "si_add", "price": {"id": ADDON_PRICE}, "quantity": 2}]
+            },
+        },
+        status=200,
+    )
     responses.add(
         responses.DELETE,
         f"{STRIPE_API}/subscription_items/si_add",
@@ -340,7 +353,149 @@ def test_addons_zero_deletes_item(client):
 
     assert response.status_code == 200
     assert response.json() == {"units": 0}
-    assert len(responses.calls) == 1
+    assert len(responses.calls) == 2
+    assert ComicPlan.objects.get(comic=comic).stripe_addon_item_id == ""
+
+
+@responses.activate
+@override_settings(**ADDON_SETTINGS)
+@pytest.mark.django_db
+def test_addons_can_delete_then_readd(client):
+    owner, comic = _scene()
+    _subscribed_plan(comic, stripe_addon_item_id="si_add")
+    client.force_login(owner)
+    responses.add(
+        responses.GET,
+        f"{STRIPE_API}/subscriptions/sub_1",
+        json={
+            "id": "sub_1",
+            "object": "subscription",
+            "items": {
+                "data": [{"id": "si_add", "price": {"id": ADDON_PRICE}, "quantity": 2}]
+            },
+        },
+        status=200,
+    )
+    responses.add(
+        responses.DELETE,
+        f"{STRIPE_API}/subscription_items/si_add",
+        json={"id": "si_add", "object": "subscription_item", "deleted": True},
+        status=200,
+    )
+    assert (
+        client.post(
+            f"/comics/{comic.id}/billing/addons",
+            data=json.dumps({"units": 0}),
+            content_type="application/json",
+        ).status_code
+        == 200
+    )
+
+    responses.reset()
+    responses.add(
+        responses.GET,
+        f"{STRIPE_API}/subscriptions/sub_1",
+        json={"id": "sub_1", "object": "subscription", "items": {"data": []}},
+        status=200,
+    )
+    responses.add(
+        responses.POST,
+        f"{STRIPE_API}/subscription_items",
+        json={"id": "si_new", "object": "subscription_item"},
+        status=200,
+    )
+    response = client.post(
+        f"/comics/{comic.id}/billing/addons",
+        data=json.dumps({"units": 2}),
+        content_type="application/json",
+    )
+
+    assert response.status_code == 200
+    assert ComicPlan.objects.get(comic=comic).stripe_addon_item_id == "si_new"
+
+
+@responses.activate
+@override_settings(**ADDON_SETTINGS)
+@pytest.mark.django_db
+def test_addons_recovers_from_stale_item_id(client):
+    owner, comic = _scene()
+    _subscribed_plan(comic, stripe_addon_item_id="si_gone")
+    client.force_login(owner)
+    responses.add(
+        responses.POST,
+        f"{STRIPE_API}/subscription_items/si_gone",
+        json={"error": {"message": "No such subscription item"}},
+        status=404,
+    )
+    responses.add(
+        responses.GET,
+        f"{STRIPE_API}/subscriptions/sub_1",
+        json={
+            "id": "sub_1",
+            "object": "subscription",
+            "items": {
+                "data": [{"id": "si_real", "price": {"id": ADDON_PRICE}, "quantity": 1}]
+            },
+        },
+        status=200,
+    )
+    responses.add(
+        responses.POST,
+        f"{STRIPE_API}/subscription_items/si_real",
+        json={"id": "si_real", "object": "subscription_item"},
+        status=200,
+    )
+
+    response = client.post(
+        f"/comics/{comic.id}/billing/addons",
+        data=json.dumps({"units": 2}),
+        content_type="application/json",
+    )
+
+    assert response.status_code == 200
+    assert ComicPlan.objects.get(comic=comic).stripe_addon_item_id == "si_real"
+
+
+@responses.activate
+@override_settings(**ADDON_SETTINGS)
+@pytest.mark.django_db
+def test_addons_zero_removes_all_matching_items(client):
+    owner, comic = _scene()
+    _subscribed_plan(comic, stripe_addon_item_id="si_one")
+    client.force_login(owner)
+    responses.add(
+        responses.GET,
+        f"{STRIPE_API}/subscriptions/sub_1",
+        json={
+            "id": "sub_1",
+            "object": "subscription",
+            "items": {
+                "data": [
+                    {"id": "si_one", "price": {"id": ADDON_PRICE}, "quantity": 1},
+                    {"id": "si_two", "price": {"id": ADDON_PRICE}, "quantity": 1},
+                ]
+            },
+        },
+        status=200,
+    )
+    for item_id in ("si_one", "si_two"):
+        responses.add(
+            responses.DELETE,
+            f"{STRIPE_API}/subscription_items/{item_id}",
+            json={"id": item_id, "object": "subscription_item", "deleted": True},
+            status=200,
+        )
+
+    response = client.post(
+        f"/comics/{comic.id}/billing/addons",
+        data=json.dumps({"units": 0}),
+        content_type="application/json",
+    )
+
+    assert response.status_code == 200
+    assert ComicPlan.objects.get(comic=comic).stripe_addon_item_id == ""
+    deletes = [call for call in responses.calls if call.request.method == "DELETE"]
+    assert len(deletes) == 2
 
 
 @responses.activate

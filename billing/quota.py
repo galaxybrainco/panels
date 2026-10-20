@@ -30,6 +30,20 @@ def addon_item(subscription):
     return item_id, units
 
 
+def addon_item_ids(subscription):
+    price_id = settings.BILLING_STORAGE_ADDON_PRICE
+    if not price_id:
+        return []
+    ids = []
+    for item in _items(subscription):
+        price = get_field(item, "price") or {}
+        if get_field(price, "id") == price_id:
+            item_id = get_field(item, "id")
+            if item_id:
+                ids.append(item_id)
+    return ids
+
+
 def addon_units(subscription):
     return addon_item(subscription)[1]
 
