@@ -14,9 +14,13 @@ from social.models import Follow
 
 
 def _payload(request):
-    content_type = request.content_type or ""
-    if not request.body.strip() or not content_type.startswith("application/json"):
+    if not request.body.strip():
         return {}
+    content_type = request.content_type or ""
+    if not content_type.startswith("application/json"):
+        if content_type.startswith("multipart/form-data") and not request.POST:
+            return {}
+        raise services.InvalidPayloadError
     try:
         data = json.loads(request.body)
     except ValueError as exc:

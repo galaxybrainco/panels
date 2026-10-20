@@ -1,4 +1,5 @@
 import re
+from urllib.parse import urlsplit
 
 from django.conf import settings
 from django.db.models import Q
@@ -107,7 +108,9 @@ def is_thread_muted(user, page):
 
 
 def add_filter(user, phrase, *, expires_at=None):
-    phrase = (phrase or "").strip()
+    if not isinstance(phrase, str):
+        raise InvalidPhraseError
+    phrase = phrase.strip()
     if not phrase or len(phrase) > 255:
         raise InvalidPhraseError
     _validate_expiry(expires_at)
@@ -156,25 +159,47 @@ def is_filtered(user, *, actor=None, page=None, comment=None):
     return matching_filter(user, actor=actor, page=page, comment=comment) is not None
 
 
+def _host(domain):
+    raw = (domain or "").strip().lower().rstrip(".")
+    if not raw:
+        return ""
+    parsed = urlsplit(f"//{raw}")
+    if parsed.username or parsed.password or parsed.query or parsed.fragment:
+        return ""
+    if parsed.path not in ("", "/"):
+        return ""
+    host = parsed.hostname or ""
+    try:
+        host = host.encode("idna").decode("ascii")
+    except UnicodeError:
+        return ""
+    if not host or len(host) > 255 or not DOMAIN_RE.match(host):
+        return ""
+    return host
+
+
 def block_domain(user, domain):
-    normalized = (domain or "").strip().lower()
-    if not normalized or normalized == settings.INSTANCE_DOMAIN.lower():
+    host = _host(domain)
+    if not host or host == _host(settings.INSTANCE_DOMAIN):
         raise InvalidDomainError
-    if not DOMAIN_RE.match(normalized):
-        raise InvalidDomainError
-    block, _ = DomainBlock.objects.get_or_create(user=user, domain=normalized)
+    block, _ = DomainBlock.objects.get_or_create(user=user, domain=host)
     return block
 
 
 def unblock_domain(user, domain):
-    normalized = (domain or "").strip().lower()
-    return DomainBlock.objects.filter(user=user, domain=normalized).delete()[0]
+    host = _host(domain)
+    if not host:
+        return 0
+    return DomainBlock.objects.filter(user=user, domain=host).delete()[0]
 
 
 def is_domain_blocked(user, domain):
-    if user is None or not domain:
+    if user is None:
         return False
-    return DomainBlock.objects.filter(user=user, domain=domain.strip().lower()).exists()
+    host = _host(domain)
+    if not host:
+        return False
+    return DomainBlock.objects.filter(user=user, domain=host).exists()
 
 
 def notification_allowed(user, *, actor=None, page=None, comment=None):

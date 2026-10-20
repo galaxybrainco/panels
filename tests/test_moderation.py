@@ -11,8 +11,15 @@ from actors.models import Actor, ActorType
 from comics.services import create_comic, create_page, create_series
 from moderation import services
 from moderation.models import DomainBlock, KeywordFilter, Mute
-from social.models import Follow, FollowStatus, NotificationType
-from social.notifications import notify
+from social.models import Boost, Follow, FollowStatus, Like, NotificationType
+from social.notifications import (
+    notify,
+    notify_boost,
+    notify_follow,
+    notify_like,
+    notify_new_page,
+    notify_reply,
+)
 
 
 def _user(email=None):
@@ -390,3 +397,106 @@ def test_notification_gate_ignores_expired_preferences():
         expires_at=timezone.now() - timedelta(seconds=1)
     )
     assert notify(user, kind=NotificationType.REPLY, actor=actor, page=page) is not None
+
+
+@pytest.mark.parametrize("phrase", [123, True, ["x"], {"a": 1}])
+@pytest.mark.django_db
+def test_filter_phrase_must_be_a_string(client, phrase):
+    client.force_login(_user())
+    response = client.post(
+        "/moderation/filters",
+        data=json.dumps({"phrase": phrase}),
+        content_type="application/json",
+    )
+    assert response.status_code == 400
+    assert response.json() == {"error": "invalid_phrase"}
+
+
+@pytest.mark.django_db
+def test_moderation_rejects_non_json_payloads(client):
+    user = _user()
+    actor = _remote()
+    client.force_login(user)
+    response = client.post(
+        f"/moderation/mutes/{actor.id}",
+        data={"hide_notifications": "on"},
+    )
+    assert response.status_code == 400
+    assert response.json() == {"error": "invalid_payload"}
+    assert services.is_muted(user, actor) is False
+
+
+@pytest.mark.django_db
+def test_domain_block_normalizes_ports_and_idn_and_length():
+    user = _user()
+    assert services.block_domain(user, "Remote.Test:8443").domain == "remote.test"
+    assert services.is_domain_blocked(user, "remote.test:8443") is True
+    idn = services.block_domain(user, "münich.example")
+    assert idn.domain == "xn--mnich-kva.example"
+    assert services.is_domain_blocked(user, "MÜNICH.example") is True
+    with pytest.raises(services.InvalidDomainError):
+        services.block_domain(user, f"{'a' * 300}.example")
+
+
+@pytest.mark.django_db
+def test_notify_follow_and_new_page_use_the_gate():
+    owner, comic, page = _scene()
+    follower_actor = _remote(handle="fan")
+    follow = Follow.objects.create(
+        follower=follower_actor, target=comic.actor, status=FollowStatus.ACCEPTED
+    )
+    assert notify_follow(follow) is not None
+
+    services.mute_actor(owner, follower_actor, hide_notifications=True)
+    assert notify_follow(follow) is None
+
+    reader = _user()
+    local_follower = Actor.objects.create(
+        ap_id=f"http://testserver/actors/{uuid4().hex}",
+        handle=uuid4().hex,
+        domain="",
+        user=reader,
+    )
+    Follow.objects.create(
+        follower=local_follower, target=comic.actor, status=FollowStatus.ACCEPTED
+    )
+    page.published_by = owner
+    page.save(update_fields=["published_by"])
+    assert len(notify_new_page(page)) == 1
+    services.mute_actor(reader, comic.actor, hide_notifications=True)
+    assert notify_new_page(page) == []
+
+
+@pytest.mark.django_db
+def test_notify_reply_matches_comment_text():
+    owner, _, page = _scene()
+    page.published_by = owner
+    page.save(update_fields=["published_by"])
+    actor = _remote()
+    comment = page.comments.create(
+        actor=actor,
+        ap_id=f"https://remote.test/comments/{uuid4()}",
+        in_reply_to=f"https://testserver/pages/{page.id}",
+        content="huge SPOILERS inside",
+    )
+    services.add_filter(owner, "spoilers")
+    assert notify_reply(comment) is None
+
+
+@pytest.mark.django_db
+def test_notify_like_and_boost_use_the_gate():
+    owner, _, page = _scene()
+    page.published_by = owner
+    page.save(update_fields=["published_by"])
+    actor = _remote()
+    like = Like.objects.create(
+        actor=actor, object_id="https://remote.test/1", page=page
+    )
+    boost = Boost.objects.create(
+        actor=actor, object_id="https://remote.test/2", page=page
+    )
+    assert notify_like(like) is not None
+    assert notify_boost(boost) is not None
+    services.mute_actor(owner, actor, hide_notifications=True)
+    assert notify_like(like) is None
+    assert notify_boost(boost) is None
