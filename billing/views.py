@@ -22,17 +22,17 @@ def billing_enabled(view):
     return wrapped
 
 
-def _interval(request):
+def _payload(request):
     content_type = request.content_type or ""
     if not request.body.strip() or not content_type.startswith("application/json"):
-        return "month"
+        return {}
     try:
         payload = json.loads(request.body)
     except ValueError as exc:
         raise services.InvalidPayloadError from exc
     if not isinstance(payload, dict):
         raise services.InvalidPayloadError
-    return payload.get("interval") or "month"
+    return payload
 
 
 @billing_enabled
@@ -41,11 +41,21 @@ def _interval(request):
 def checkout(request, comic_id):
     comic = get_object_or_404(Comic, pk=comic_id)
     try:
-        url = services.start_checkout(comic, request.user, _interval(request))
+        payload = _payload(request)
+        url = services.start_checkout(
+            comic,
+            request.user,
+            payload.get("interval") or "month",
+            payload.get("addon_units", 0),
+        )
     except services.InvalidPayloadError:
         return JsonResponse({"error": "invalid_payload"}, status=400)
+    except services.InvalidUnitsError:
+        return JsonResponse({"error": "invalid_units"}, status=400)
     except services.InvalidIntervalError:
         return JsonResponse({"error": "invalid_interval"}, status=400)
+    except services.AddonsUnavailableError:
+        return JsonResponse({"error": "addons_unavailable"}, status=409)
     except services.NotOwnerError:
         return JsonResponse({"error": "not_owner"}, status=403)
     except services.AlreadySubscribedError:

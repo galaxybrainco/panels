@@ -30,6 +30,18 @@ class NoBillingAccountError(Exception):
     pass
 
 
+class InvalidUnitsError(Exception):
+    pass
+
+
+class AddonsUnavailableError(Exception):
+    pass
+
+
+class NoSubscriptionError(Exception):
+    pass
+
+
 class StripeError(Exception):
     pass
 
@@ -67,14 +79,30 @@ def price_for(interval):
     return price
 
 
-def start_checkout(comic, user, interval="month"):
+def validate_units(units):
+    if isinstance(units, bool) or not isinstance(units, int):
+        raise InvalidUnitsError
+    if units < 0 or units > settings.BILLING_STORAGE_ADDON_MAX_UNITS:
+        raise InvalidUnitsError
+    return units
+
+
+def start_checkout(comic, user, interval="month", addon_units=0):
     if not settings.BILLING_ENABLED:
         raise BillingDisabledError
     if not is_owner(comic, user):
         raise NotOwnerError
+    addon_units = validate_units(addon_units)
+    if addon_units and not settings.BILLING_STORAGE_ADDON_PRICE:
+        raise AddonsUnavailableError
     if ComicPlan.objects.filter(comic=comic, status=PlanStatus.ACTIVE).exists():
         raise AlreadySubscribedError
     price = price_for(interval)
+    line_items = [{"price": price, "quantity": 1}]
+    if addon_units:
+        line_items.append(
+            {"price": settings.BILLING_STORAGE_ADDON_PRICE, "quantity": addon_units}
+        )
     existing = BillingCustomer.objects.filter(user=user).first()
     if existing is not None and existing.stripe_customer_id:
         account = existing
@@ -87,7 +115,7 @@ def start_checkout(comic, user, interval="month"):
         session = stripe_client.create_checkout_session(
             mode="subscription",
             customer=account.stripe_customer_id,
-            line_items=[{"price": price, "quantity": 1}],
+            line_items=line_items,
             success_url=settings.BILLING_SUCCESS_URL,
             cancel_url=settings.BILLING_CANCEL_URL,
             client_reference_id=str(comic.id),

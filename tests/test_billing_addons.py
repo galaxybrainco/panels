@@ -2,9 +2,11 @@ import hashlib
 import hmac
 import json
 import time
+from urllib.parse import parse_qs
 from uuid import uuid4
 
 import pytest
+import responses
 from django.contrib.auth import get_user_model
 from django.test import override_settings
 
@@ -165,3 +167,84 @@ def test_webhook_ignores_unrelated_items_when_unconfigured(client):
     plan = ComicPlan.objects.get(comic=comic)
     assert plan.quota_bytes == BASE
     assert plan.stripe_addon_item_id == ""
+
+
+STRIPE_API = "https://api.stripe.com/v1"
+
+
+def _checkout_scene(client):
+    owner, comic = _scene()
+    client.force_login(owner)
+    responses.add(
+        responses.POST,
+        f"{STRIPE_API}/customers",
+        json={"id": "cus_123", "object": "customer"},
+        status=200,
+    )
+    responses.add(
+        responses.POST,
+        f"{STRIPE_API}/checkout/sessions",
+        json={
+            "id": "cs_123",
+            "object": "checkout.session",
+            "url": "https://checkout.stripe.test/cs_123",
+        },
+        status=200,
+    )
+    return owner, comic
+
+
+@responses.activate
+@override_settings(**ADDON_SETTINGS)
+@pytest.mark.django_db
+def test_checkout_adds_storage_line_item(client):
+    _, comic = _checkout_scene(client)
+    response = client.post(
+        f"/comics/{comic.id}/billing/checkout",
+        data=json.dumps({"addon_units": 2}),
+        content_type="application/json",
+    )
+    assert response.status_code == 200
+    body = parse_qs(responses.calls[1].request.body)
+    assert body["line_items[1][price]"] == [ADDON_PRICE]
+    assert body["line_items[1][quantity]"] == ["2"]
+
+
+@responses.activate
+@override_settings(**ADDON_SETTINGS)
+@pytest.mark.django_db
+def test_checkout_without_addons_has_one_line_item(client):
+    _, comic = _checkout_scene(client)
+    response = client.post(f"/comics/{comic.id}/billing/checkout")
+    assert response.status_code == 200
+    body = parse_qs(responses.calls[1].request.body)
+    assert "line_items[1][price]" not in body
+
+
+@pytest.mark.parametrize("units", ["2", -1, 6, True, 1.5])
+@override_settings(**ADDON_SETTINGS)
+@pytest.mark.django_db
+def test_checkout_rejects_invalid_addon_units(client, units):
+    owner, comic = _scene()
+    client.force_login(owner)
+    response = client.post(
+        f"/comics/{comic.id}/billing/checkout",
+        data=json.dumps({"addon_units": units}),
+        content_type="application/json",
+    )
+    assert response.status_code == 400
+    assert response.json() == {"error": "invalid_units"}
+
+
+@override_settings(**{**ADDON_SETTINGS, "BILLING_STORAGE_ADDON_PRICE": ""})
+@pytest.mark.django_db
+def test_checkout_rejects_addons_when_unconfigured(client):
+    owner, comic = _scene()
+    client.force_login(owner)
+    response = client.post(
+        f"/comics/{comic.id}/billing/checkout",
+        data=json.dumps({"addon_units": 2}),
+        content_type="application/json",
+    )
+    assert response.status_code == 409
+    assert response.json() == {"error": "addons_unavailable"}
