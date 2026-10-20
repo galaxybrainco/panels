@@ -14,4 +14,9 @@ urlpatterns = [
         views.portal,
         name="billing-portal",
     ),
+    path(
+        "comics/<uuid:comic_id>/billing/addons",
+        views.addons,
+        name="billing-addons",
+    ),
 ]

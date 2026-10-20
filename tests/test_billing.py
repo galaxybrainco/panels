@@ -414,11 +414,13 @@ def test_webhook_deletion_marks_plan_past_due(client):
 
 @override_settings(**BILLING_SETTINGS)
 @pytest.mark.django_db
-def test_webhook_preserves_quota_on_update(client):
+def test_webhook_recomputes_quota_on_update(client):
     _, comic = _comic_scene()
     ComicPlan.objects.create(comic=comic, status=PlanStatus.ACTIVE, quota_bytes=12_345)
     _post_event(client, "customer.subscription.updated", comic)
-    assert ComicPlan.objects.get(comic=comic).quota_bytes == 12_345
+    plan = ComicPlan.objects.get(comic=comic)
+    assert plan.quota_bytes == settings.MEDIA_STORAGE_QUOTA_BYTES
+    assert plan.stripe_addon_item_id == ""
 
 
 @override_settings(**BILLING_SETTINGS)
@@ -661,7 +663,7 @@ def test_sync_handles_plan_created_after_read(monkeypatch):
     monkeypatch.setattr(ComicPlan.objects, "filter", real_filter)
     plan = ComicPlan.objects.get(comic=comic)
     assert plan.status == PlanStatus.ACTIVE
-    assert plan.quota_bytes == 99
+    assert plan.quota_bytes == settings.MEDIA_STORAGE_QUOTA_BYTES
 
 
 @override_settings(**{**BILLING_SETTINGS, "BILLING_ENABLED": False})

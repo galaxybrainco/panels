@@ -1,7 +1,7 @@
 from django.conf import settings
 from django.db import IntegrityError
 
-from billing import stripe_client
+from billing import quota, stripe_client
 from billing.models import BillingCustomer, ComicPlan, PlanStatus
 from comics.models import ComicRole
 
@@ -144,3 +144,45 @@ def open_portal(comic, user):
     except stripe_client.StripeRequestError as exc:
         raise StripeError(str(exc)) from exc
     return session.url
+
+
+def set_addon_units(comic, user, units):
+    if not settings.BILLING_ENABLED:
+        raise BillingDisabledError
+    if not is_owner(comic, user):
+        raise NotOwnerError
+    units = validate_units(units)
+    price = settings.BILLING_STORAGE_ADDON_PRICE
+    if not price:
+        raise AddonsUnavailableError
+    plan = ComicPlan.objects.filter(comic=comic).first()
+    if (
+        plan is None
+        or not plan.stripe_subscription_id
+        or plan.status not in (PlanStatus.ACTIVE, PlanStatus.PAST_DUE)
+    ):
+        raise NoSubscriptionError
+    item_id = plan.stripe_addon_item_id
+    try:
+        if not item_id:
+            subscription = stripe_client.retrieve_subscription(
+                plan.stripe_subscription_id
+            )
+            item_id, _ = quota.addon_item(subscription)
+            if item_id:
+                plan.stripe_addon_item_id = item_id
+                plan.save(update_fields=["stripe_addon_item_id"])
+        if units == 0:
+            if item_id:
+                stripe_client.delete_subscription_item(item_id)
+        elif item_id:
+            stripe_client.modify_subscription_item(item_id, quantity=units)
+        else:
+            stripe_client.create_subscription_item(
+                subscription=plan.stripe_subscription_id,
+                price=price,
+                quantity=units,
+            )
+    except stripe_client.StripeRequestError as exc:
+        raise StripeError(str(exc)) from exc
+    return units

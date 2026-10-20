@@ -11,7 +11,8 @@ from django.contrib.auth import get_user_model
 from django.test import override_settings
 
 from billing import quota
-from billing.models import ComicPlan
+from billing.models import ComicPlan, PlanStatus
+from comics.models import ComicRole
 from comics.services import create_comic
 
 ADDON_PRICE = "price_addon"
@@ -248,3 +249,272 @@ def test_checkout_rejects_addons_when_unconfigured(client):
     )
     assert response.status_code == 409
     assert response.json() == {"error": "addons_unavailable"}
+
+
+def _subscribed_plan(comic, **kwargs):
+    status = kwargs.pop("status", PlanStatus.ACTIVE)
+    kwargs.setdefault("stripe_subscription_id", "sub_1")
+    return ComicPlan.objects.create(
+        comic=comic, status=status, quota_bytes=BASE, **kwargs
+    )
+
+
+@responses.activate
+@override_settings(**ADDON_SETTINGS)
+@pytest.mark.django_db
+def test_addons_creates_item_when_none_exists(client):
+    owner, comic = _scene()
+    _subscribed_plan(comic)
+    client.force_login(owner)
+    responses.add(
+        responses.GET,
+        f"{STRIPE_API}/subscriptions/sub_1",
+        json={"id": "sub_1", "object": "subscription", "items": {"data": []}},
+        status=200,
+    )
+    responses.add(
+        responses.POST,
+        f"{STRIPE_API}/subscription_items",
+        json={"id": "si_new", "object": "subscription_item"},
+        status=200,
+    )
+
+    response = client.post(
+        f"/comics/{comic.id}/billing/addons",
+        data=json.dumps({"units": 3}),
+        content_type="application/json",
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"units": 3}
+    body = parse_qs(responses.calls[1].request.body)
+    assert body["subscription"] == ["sub_1"]
+    assert body["price"] == [ADDON_PRICE]
+    assert body["quantity"] == ["3"]
+
+
+@responses.activate
+@override_settings(**ADDON_SETTINGS)
+@pytest.mark.django_db
+def test_addons_modifies_stored_item(client):
+    owner, comic = _scene()
+    _subscribed_plan(comic, stripe_addon_item_id="si_add")
+    client.force_login(owner)
+    responses.add(
+        responses.POST,
+        f"{STRIPE_API}/subscription_items/si_add",
+        json={"id": "si_add", "object": "subscription_item"},
+        status=200,
+    )
+
+    response = client.post(
+        f"/comics/{comic.id}/billing/addons",
+        data=json.dumps({"units": 2}),
+        content_type="application/json",
+    )
+
+    assert response.status_code == 200
+    body = parse_qs(responses.calls[0].request.body)
+    assert body["quantity"] == ["2"]
+
+
+@responses.activate
+@override_settings(**ADDON_SETTINGS)
+@pytest.mark.django_db
+def test_addons_zero_deletes_item(client):
+    owner, comic = _scene()
+    _subscribed_plan(comic, stripe_addon_item_id="si_add")
+    client.force_login(owner)
+    responses.add(
+        responses.DELETE,
+        f"{STRIPE_API}/subscription_items/si_add",
+        json={"id": "si_add", "object": "subscription_item", "deleted": True},
+        status=200,
+    )
+
+    response = client.post(
+        f"/comics/{comic.id}/billing/addons",
+        data=json.dumps({"units": 0}),
+        content_type="application/json",
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"units": 0}
+    assert len(responses.calls) == 1
+
+
+@responses.activate
+@override_settings(**ADDON_SETTINGS)
+@pytest.mark.django_db
+def test_addons_zero_without_item_is_a_noop(client):
+    owner, comic = _scene()
+    _subscribed_plan(comic)
+    client.force_login(owner)
+    responses.add(
+        responses.GET,
+        f"{STRIPE_API}/subscriptions/sub_1",
+        json={"id": "sub_1", "object": "subscription", "items": {"data": []}},
+        status=200,
+    )
+
+    response = client.post(
+        f"/comics/{comic.id}/billing/addons",
+        data=json.dumps({"units": 0}),
+        content_type="application/json",
+    )
+
+    assert response.status_code == 200
+    assert len(responses.calls) == 1
+
+
+@responses.activate
+@override_settings(**ADDON_SETTINGS)
+@pytest.mark.django_db
+def test_addons_falls_back_to_retrieving_the_item(client):
+    owner, comic = _scene()
+    _subscribed_plan(comic)
+    client.force_login(owner)
+    responses.add(
+        responses.GET,
+        f"{STRIPE_API}/subscriptions/sub_1",
+        json={
+            "id": "sub_1",
+            "object": "subscription",
+            "items": {
+                "data": [
+                    {"id": "si_found", "price": {"id": ADDON_PRICE}, "quantity": 1}
+                ]
+            },
+        },
+        status=200,
+    )
+    responses.add(
+        responses.POST,
+        f"{STRIPE_API}/subscription_items/si_found",
+        json={"id": "si_found", "object": "subscription_item"},
+        status=200,
+    )
+
+    response = client.post(
+        f"/comics/{comic.id}/billing/addons",
+        data=json.dumps({"units": 4}),
+        content_type="application/json",
+    )
+
+    assert response.status_code == 200
+    plan = ComicPlan.objects.get(comic=comic)
+    assert plan.stripe_addon_item_id == "si_found"
+
+
+@pytest.mark.parametrize("units", ["2", -1, 6, True, 1.5])
+@override_settings(**ADDON_SETTINGS)
+@pytest.mark.django_db
+def test_addons_rejects_invalid_units(client, units):
+    owner, comic = _scene()
+    _subscribed_plan(comic)
+    client.force_login(owner)
+    response = client.post(
+        f"/comics/{comic.id}/billing/addons",
+        data=json.dumps({"units": units}),
+        content_type="application/json",
+    )
+    assert response.status_code == 400
+    assert response.json() == {"error": "invalid_units"}
+
+
+@override_settings(**ADDON_SETTINGS)
+@pytest.mark.django_db
+def test_addons_requires_units(client):
+    owner, comic = _scene()
+    _subscribed_plan(comic)
+    client.force_login(owner)
+    response = client.post(
+        f"/comics/{comic.id}/billing/addons",
+        data=json.dumps({}),
+        content_type="application/json",
+    )
+    assert response.status_code == 400
+    assert response.json() == {"error": "invalid_units"}
+
+
+@override_settings(**ADDON_SETTINGS)
+@pytest.mark.django_db
+def test_addons_requires_a_subscription(client):
+    owner, comic = _scene()
+    _subscribed_plan(comic, stripe_subscription_id="")
+    client.force_login(owner)
+    response = client.post(
+        f"/comics/{comic.id}/billing/addons",
+        data=json.dumps({"units": 1}),
+        content_type="application/json",
+    )
+    assert response.status_code == 409
+    assert response.json() == {"error": "no_subscription"}
+
+
+@override_settings(**{**ADDON_SETTINGS, "BILLING_STORAGE_ADDON_PRICE": ""})
+@pytest.mark.django_db
+def test_addons_unavailable_when_unconfigured(client):
+    owner, comic = _scene()
+    _subscribed_plan(comic)
+    client.force_login(owner)
+    response = client.post(
+        f"/comics/{comic.id}/billing/addons",
+        data=json.dumps({"units": 1}),
+        content_type="application/json",
+    )
+    assert response.status_code == 409
+    assert response.json() == {"error": "addons_unavailable"}
+
+
+@override_settings(**ADDON_SETTINGS)
+@pytest.mark.django_db
+def test_addons_rejects_non_owner(client):
+    _, comic = _scene()
+    _subscribed_plan(comic)
+    collaborator = get_user_model().objects.create_user(
+        email="editor@example.com", password="x"
+    )
+    ComicRole.objects.create(comic=comic, user=collaborator, role=ComicRole.Role.EDITOR)
+    client.force_login(collaborator)
+    response = client.post(
+        f"/comics/{comic.id}/billing/addons",
+        data=json.dumps({"units": 1}),
+        content_type="application/json",
+    )
+    assert response.status_code == 403
+    assert response.json() == {"error": "not_owner"}
+
+
+@override_settings(**{**ADDON_SETTINGS, "BILLING_ENABLED": False})
+@pytest.mark.django_db
+def test_addons_hidden_when_billing_disabled(client):
+    _, comic = _scene()
+    response = client.post(
+        f"/comics/{comic.id}/billing/addons",
+        data=json.dumps({"units": 1}),
+        content_type="application/json",
+    )
+    assert response.status_code == 404
+
+
+@responses.activate
+@override_settings(**ADDON_SETTINGS)
+@pytest.mark.django_db
+def test_addons_stripe_failure_returns_502(client):
+    owner, comic = _scene()
+    _subscribed_plan(comic, stripe_addon_item_id="si_add")
+    client.force_login(owner)
+    responses.add(
+        responses.POST,
+        f"{STRIPE_API}/subscription_items/si_add",
+        json={"error": {"message": "boom"}},
+        status=500,
+    )
+    response = client.post(
+        f"/comics/{comic.id}/billing/addons",
+        data=json.dumps({"units": 2}),
+        content_type="application/json",
+    )
+    assert response.status_code == 502
+    assert response.json() == {"error": "stripe_error"}

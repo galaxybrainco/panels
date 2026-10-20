@@ -98,3 +98,28 @@ def webhook(request):
     elif event["type"] in webhooks.PAYMENT_EVENTS:
         webhooks.handle_payment_failed(event["data"]["object"])
     return JsonResponse({"received": True})
+
+
+@billing_enabled
+@require_POST
+@login_required
+def addons(request, comic_id):
+    comic = get_object_or_404(Comic, pk=comic_id)
+    try:
+        payload = _payload(request)
+        if "units" not in payload:
+            raise services.InvalidUnitsError
+        units = services.set_addon_units(comic, request.user, payload["units"])
+    except services.InvalidPayloadError:
+        return JsonResponse({"error": "invalid_payload"}, status=400)
+    except services.InvalidUnitsError:
+        return JsonResponse({"error": "invalid_units"}, status=400)
+    except services.NotOwnerError:
+        return JsonResponse({"error": "not_owner"}, status=403)
+    except services.AddonsUnavailableError:
+        return JsonResponse({"error": "addons_unavailable"}, status=409)
+    except services.NoSubscriptionError:
+        return JsonResponse({"error": "no_subscription"}, status=409)
+    except services.StripeError:
+        return JsonResponse({"error": "stripe_error"}, status=502)
+    return JsonResponse({"units": units})
