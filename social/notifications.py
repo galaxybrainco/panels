@@ -1,4 +1,5 @@
 from comics.models import ComicRole
+from moderation import services as moderation_services
 from social.models import Follow, FollowStatus, Notification, NotificationType
 
 
@@ -13,6 +14,10 @@ def notify(recipient, *, kind, actor=None, page=None, comment=None):
         return None
     actor_user = _actor_user(actor)
     if actor_user is not None and actor_user.pk == recipient.pk:
+        return None
+    if not moderation_services.notification_allowed(
+        recipient, actor=actor, page=page, comment=comment
+    ):
         return None
     return Notification.objects.create(
         recipient=recipient, type=kind, actor=actor, page=page, comment=comment
