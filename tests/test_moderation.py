@@ -11,7 +11,8 @@ from actors.models import Actor, ActorType
 from comics.services import create_comic, create_page, create_series
 from moderation import services
 from moderation.models import DomainBlock, KeywordFilter, Mute
-from social.models import Follow, FollowStatus
+from social.models import Follow, FollowStatus, NotificationType
+from social.notifications import notify
 
 
 def _user(email=None):
@@ -333,3 +334,59 @@ def test_remove_follower_endpoint_authorization(client):
 def test_moderation_endpoints_require_login(client):
     actor = _remote()
     assert client.post(f"/moderation/mutes/{actor.id}").status_code == 302
+
+
+@pytest.mark.django_db
+def test_notification_gate_honors_mute_toggle():
+    user = _user()
+    actor = _remote()
+    _, _, page = _scene()
+    services.mute_actor(user, actor)
+    assert notify(user, kind=NotificationType.REPLY, actor=actor, page=page) is not None
+    services.mute_actor(user, actor, hide_notifications=True)
+    assert notify(user, kind=NotificationType.REPLY, actor=actor, page=page) is None
+
+
+@pytest.mark.django_db
+def test_notification_gate_honors_thread_mute():
+    user = _user()
+    actor = _remote()
+    _, _, page = _scene()
+    services.mute_thread(user, page)
+    assert notify(user, kind=NotificationType.REPLY, actor=actor, page=page) is None
+
+
+@pytest.mark.django_db
+def test_notification_gate_honors_domain_block():
+    user = _user()
+    actor = _remote(domain="blocked.test")
+    _, _, page = _scene()
+    services.block_domain(user, "blocked.test")
+    assert notify(user, kind=NotificationType.REPLY, actor=actor, page=page) is None
+
+
+@pytest.mark.django_db
+def test_notification_gate_honors_keyword_filter():
+    user = _user()
+    actor = _remote()
+    _, _, page = _scene()
+    services.add_filter(user, "landing")
+    assert notify(user, kind=NotificationType.REPLY, actor=actor, page=page) is None
+
+
+@pytest.mark.django_db
+def test_notification_gate_ignores_expired_preferences():
+    user = _user()
+    actor = _remote()
+    _, _, page = _scene()
+    services.mute_actor(
+        user, actor, hide_notifications=True, expires_at=_future(days=1)
+    )
+    services.add_filter(user, "landing", expires_at=_future(days=1))
+    Mute.objects.filter(user=user).update(
+        expires_at=timezone.now() - timedelta(seconds=1)
+    )
+    KeywordFilter.objects.filter(user=user).update(
+        expires_at=timezone.now() - timedelta(seconds=1)
+    )
+    assert notify(user, kind=NotificationType.REPLY, actor=actor, page=page) is not None
