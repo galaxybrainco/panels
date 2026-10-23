@@ -6,6 +6,7 @@ from django.db.models import Q
 from django.utils import timezone
 
 from comics.models import Comic, ComicRole
+from moderation import blocks as block_services
 from moderation.models import DomainBlock, KeywordFilter, Mute, ThreadMute
 
 DOMAIN_RE = re.compile(
@@ -205,6 +206,8 @@ def is_domain_blocked(user, domain):
 def notification_allowed(user, *, actor=None, page=None, comment=None):
     if user is None:
         return True
+    if block_services.is_blocked(user, actor):
+        return False
     mute = active_mute(user, actor)
     if mute is not None and mute.hide_notifications:
         return False

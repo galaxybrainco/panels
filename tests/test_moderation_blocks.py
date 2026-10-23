@@ -5,8 +5,10 @@ from django.contrib.auth import get_user_model
 
 from actors.models import Actor, ActorType
 from actors.services import create_local_actor
+from federation.models import Activity
 from moderation import blocks
 from moderation.models import Block
+from moderation.services import notification_allowed
 from social.models import Follow, FollowStatus
 
 
@@ -148,3 +150,89 @@ def test_should_drop_inbound_allows_undo(sent):
     assert blocks.should_drop_inbound(target, "Create") is True
     assert blocks.should_drop_inbound(target, "Undo") is False
     assert blocks.should_drop_inbound(_remote(handle="other"), "Create") is False
+
+
+def _activity(actor, payload):
+    return Activity.objects.create(
+        ap_id=payload["id"],
+        type=payload.get("type", ""),
+        actor=actor,
+        payload=payload,
+    )
+
+
+@pytest.mark.django_db
+def test_inbound_block_stores_and_removes_follows(sent):
+    me = _personal(_user())
+    remote = _remote()
+    Follow.objects.create(follower=remote, target=me, status=FollowStatus.ACCEPTED)
+    payload = {
+        "id": "https://remote.test/blocks/1",
+        "type": "Block",
+        "actor": remote.ap_id,
+        "object": me.ap_id,
+    }
+    activity = _activity(remote, payload)
+
+    from moderation.handlers import handle_block
+
+    handle_block(activity)
+
+    block = Block.objects.get(blocker=remote, blocked=me)
+    assert block.activity_id == payload["id"]
+    assert not Follow.objects.filter(follower=remote, target=me).exists()
+
+
+@pytest.mark.django_db
+def test_inbound_undo_block_removes_row(sent):
+    me = _personal(_user())
+    remote = _remote()
+    Block.objects.create(
+        blocker=remote, blocked=me, activity_id="https://remote.test/blocks/1"
+    )
+    payload = {
+        "id": "https://remote.test/undos/1",
+        "type": "Undo",
+        "actor": remote.ap_id,
+        "object": {
+            "id": "https://remote.test/blocks/1",
+            "type": "Block",
+            "actor": remote.ap_id,
+            "object": me.ap_id,
+        },
+    }
+    activity = _activity(remote, payload)
+
+    from moderation.blocks import handle_undo_block
+
+    handle_undo_block(activity, payload["object"])
+
+    assert not Block.objects.filter(blocker=remote, blocked=me).exists()
+
+
+@pytest.mark.django_db
+def test_inbound_block_of_unknown_actor_is_ignored(sent):
+    remote = _remote()
+    payload = {
+        "id": "https://remote.test/blocks/2",
+        "type": "Block",
+        "actor": remote.ap_id,
+        "object": "https://elsewhere.test/actors/nobody",
+    }
+    from moderation.blocks import record_inbound_block
+
+    assert record_inbound_block(_activity(remote, payload)) is None
+
+
+@pytest.mark.django_db
+def test_notification_gate_suppresses_blocks_both_directions(sent):
+    user = _user()
+    me = _personal(user)
+    target = _remote()
+    blocks.block_actor(user, target)
+    assert notification_allowed(user, actor=target, page=None) is False
+
+    blocker = _remote(handle="blocker")
+    Block.objects.create(blocker=blocker, blocked=me)
+    assert notification_allowed(user, actor=blocker, page=None) is False
+    assert notification_allowed(user, actor=_remote(handle="fine"), page=None) is True
