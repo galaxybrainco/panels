@@ -8,6 +8,7 @@ from django.views.decorators.http import require_http_methods
 
 from actors.models import Actor
 from comics.models import Page
+from moderation import blocks as block_services
 from moderation import services
 from moderation.models import KeywordFilter
 from social.models import Follow
@@ -164,3 +165,22 @@ def remove_follower(request, actor_id, follow_id):
     except services.FollowNotFoundError as exc:
         raise Http404 from exc
     return JsonResponse({"removed": True})
+
+
+@login_required
+@require_http_methods(["POST", "DELETE"])
+def blocks(request, actor_id):
+    actor = get_object_or_404(Actor, pk=actor_id)
+    if request.method == "DELETE":
+        try:
+            block_services.unblock_actor(request.user, actor)
+        except block_services.NoActorError:
+            return _error("no_actor", 409)
+        return JsonResponse({"blocked": False})
+    try:
+        block_services.block_actor(request.user, actor)
+    except block_services.NoActorError:
+        return _error("no_actor", 409)
+    except block_services.SelfBlockError:
+        return _error("invalid_target", 400)
+    return JsonResponse({"blocked": True})

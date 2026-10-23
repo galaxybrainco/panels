@@ -236,3 +236,46 @@ def test_notification_gate_suppresses_blocks_both_directions(sent):
     Block.objects.create(blocker=blocker, blocked=me)
     assert notification_allowed(user, actor=blocker, page=None) is False
     assert notification_allowed(user, actor=_remote(handle="fine"), page=None) is True
+
+
+@pytest.mark.django_db
+def test_block_endpoint_round_trip(client, sent):
+    user = _user()
+    _personal(user)
+    target = _remote()
+    client.force_login(user)
+
+    response = client.post(f"/moderation/blocks/{target.id}")
+    assert response.status_code == 200
+    assert response.json() == {"blocked": True}
+    assert Block.objects.filter(blocked=target).exists()
+
+    response = client.delete(f"/moderation/blocks/{target.id}")
+    assert response.status_code == 200
+    assert response.json() == {"blocked": False}
+    assert not Block.objects.filter(blocked=target).exists()
+
+
+@pytest.mark.django_db
+def test_block_endpoint_requires_personal_actor(client):
+    user = _user()
+    target = _remote()
+    client.force_login(user)
+    response = client.post(f"/moderation/blocks/{target.id}")
+    assert response.status_code == 409
+    assert response.json() == {"error": "no_actor"}
+
+
+@pytest.mark.django_db
+def test_block_endpoint_rejects_self_and_unknown(client):
+    user = _user()
+    me = _personal(user)
+    client.force_login(user)
+    assert client.post(f"/moderation/blocks/{me.id}").status_code == 400
+    assert client.post(f"/moderation/blocks/{uuid4()}").status_code == 404
+
+
+@pytest.mark.django_db
+def test_block_endpoint_requires_login(client):
+    target = _remote()
+    assert client.post(f"/moderation/blocks/{target.id}").status_code == 302
