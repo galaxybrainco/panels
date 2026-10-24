@@ -9,6 +9,7 @@ from django.http import JsonResponse
 from actors.models import Instance
 from federation import handlers, http_signatures, remotes, rfc9421
 from federation.models import Activity, ActivityStatus
+from moderation import blocks
 
 INBOUND_LIMIT = 120
 INBOUND_ACTOR_LIMIT = 120
@@ -121,6 +122,8 @@ def process_inbox(request):
         return JsonResponse({"error": "actor mismatch"}, status=403)
     if not _throttle(f"actor:{actor.ap_id}", INBOUND_ACTOR_LIMIT):
         return JsonResponse({"error": "rate limited"}, status=429)
+    if blocks.should_drop_inbound(actor, document.get("type")):
+        return JsonResponse({"accepted": True}, status=202)
 
     instance = Instance.objects.filter(domain=urlparse(actor.ap_id).netloc).first()
     if instance is not None and instance.blocked:

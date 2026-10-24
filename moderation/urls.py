@@ -25,4 +25,9 @@ urlpatterns = [
         views.remove_follower,
         name="moderation-remove-follower",
     ),
+    path(
+        "moderation/blocks/<uuid:actor_id>",
+        views.blocks,
+        name="moderation-blocks",
+    ),
 ]

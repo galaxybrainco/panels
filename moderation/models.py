@@ -67,3 +67,23 @@ class DomainBlock(UUIDModel):
                 fields=["user", "domain"], name="unique_user_domain"
             )
         ]
+
+
+class Block(UUIDModel):
+    blocker = models.ForeignKey(
+        "actors.Actor", on_delete=models.CASCADE, related_name="blocks_made"
+    )
+    blocked = models.ForeignKey(
+        "actors.Actor", on_delete=models.CASCADE, related_name="blocked_by"
+    )
+    activity_id = models.CharField(max_length=255, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["blocker", "blocked"], name="unique_block"),
+            models.CheckConstraint(
+                condition=~models.Q(blocker=models.F("blocked")),
+                name="no_self_block",
+            ),
+        ]
