@@ -75,6 +75,9 @@ def handle_undo(activity):
         Follow.objects.filter(follower=activity.actor, activity_id=obj).delete()
         Like.objects.filter(actor=activity.actor, activity_id=obj).delete()
         Boost.objects.filter(actor=activity.actor, activity_id=obj).delete()
+        from moderation.models import Block
+
+        Block.objects.filter(blocker=activity.actor, activity_id=obj).delete()
 
 
 @handlers.register("Like")

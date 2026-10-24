@@ -99,7 +99,7 @@ def record_inbound_block(activity):
             blocked=blocked,
             defaults={"activity_id": activity.ap_id},
         )
-        if not created and not block.activity_id:
+        if block.activity_id != activity.ap_id:
             block.activity_id = activity.ap_id
             block.save(update_fields=["activity_id", "updated_at"])
         _remove_follows(activity.actor, blocked)
@@ -110,10 +110,10 @@ def handle_undo_block(activity, obj):
     blocked_ap_id = _object_ap_id(obj.get("object"))
     activity_id = obj.get("id") or ""
     query = Block.objects.filter(blocker=activity.actor)
-    if blocked_ap_id:
-        query = query.filter(blocked__ap_id=blocked_ap_id)
-    elif activity_id:
+    if activity_id:
         query = query.filter(activity_id=activity_id)
+    elif blocked_ap_id:
+        query = query.filter(blocked__ap_id=blocked_ap_id)
     else:
         return 0
     return query.delete()[0]
@@ -128,7 +128,9 @@ def has_block_with_local(actor):
 
 
 def should_drop_inbound(actor, activity_type):
-    return activity_type != "Undo" and has_block_with_local(actor)
+    if activity_type in {"Undo", "Block"}:
+        return False
+    return has_block_with_local(actor)
 
 
 def is_blocked(user, actor):

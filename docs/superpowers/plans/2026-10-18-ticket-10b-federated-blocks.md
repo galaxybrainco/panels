@@ -16,7 +16,7 @@
 - Only the user's personal actor (`Actor.user == user`) can originate a local block; no personal actor → 409 `no_actor`.
 - Blocking a remote target emits exactly one `Block`; unblocking emits `Undo Block`. Local targets emit nothing.
 - Blocks never delete likes, boosts, or comments; only follow rows are removed.
-- Inbound activities from an actor with any block involving a local actor are dropped with 202 and not stored, except `Undo`.
+- Inbound activities from an actor with any block involving a local actor are dropped with 202 and not stored, except `Block` and `Undo`.
 - Keep `ruff check .` and `ruff format --check .` clean; run `uv run python manage.py makemigrations --check --dry-run` before final commits.
 
 ## Review Focus
@@ -368,7 +368,9 @@ def has_block_with_local(actor):
 
 
 def should_drop_inbound(actor, activity_type):
-    return activity_type != "Undo" and has_block_with_local(actor)
+    if activity_type in {"Undo", "Block"}:
+        return False
+    return has_block_with_local(actor)
 
 
 def is_blocked(user, actor):

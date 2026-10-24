@@ -2,14 +2,19 @@ from uuid import uuid4
 
 import pytest
 from django.contrib.auth import get_user_model
+from django.core.cache import cache
+from django.urls import reverse
 
 from actors.models import Actor, ActorType
 from actors.services import create_local_actor
 from federation.models import Activity
+from federation.remotes import fetch_remote_actor
 from moderation import blocks
 from moderation.models import Block
 from moderation.services import notification_allowed
 from social.models import Follow, FollowStatus
+from tests.federation_support import post_activity
+from tests.test_federation_remotes import _remote_document
 
 
 def _user():
@@ -279,3 +284,136 @@ def test_block_endpoint_rejects_self_and_unknown(client):
 def test_block_endpoint_requires_login(client):
     target = _remote()
     assert client.post(f"/moderation/blocks/{target.id}").status_code == 302
+
+
+REMOTE = "https://other.test/actors/bob"
+REMOTE_KEY_ID = f"{REMOTE}#main-key"
+
+
+@pytest.fixture(autouse=True)
+def _clear_cache():
+    cache.clear()
+    yield
+    cache.clear()
+
+
+@pytest.fixture
+def remote_actor(monkeypatch):
+    monkeypatch.setattr(
+        "federation.remotes.client.fetch_json", lambda url, **kw: _remote_document()
+    )
+    return fetch_remote_actor(REMOTE)
+
+
+@pytest.fixture
+def keyholder(remote_actor):
+    return Actor.objects.get(handle="keyholder")
+
+
+@pytest.mark.django_db
+def test_late_undo_does_not_clear_a_newer_block(sent):
+    me = _personal(_user())
+    remote = _remote()
+    first = {
+        "id": "https://remote.test/blocks/1",
+        "type": "Block",
+        "actor": remote.ap_id,
+        "object": me.ap_id,
+    }
+    blocks.record_inbound_block(_activity(remote, first))
+    undo = _activity(remote, {"id": "https://remote.test/undos/1", "type": "Undo"})
+    blocks.handle_undo_block(undo, first)
+    second = {
+        "id": "https://remote.test/blocks/2",
+        "type": "Block",
+        "actor": remote.ap_id,
+        "object": me.ap_id,
+    }
+    blocks.record_inbound_block(_activity(remote, second))
+
+    blocks.handle_undo_block(undo, first)
+
+    row = Block.objects.get(blocker=remote, blocked=me)
+    assert row.activity_id == second["id"]
+
+
+@pytest.mark.django_db
+def test_duplicate_block_updates_activity_id(sent):
+    me = _personal(_user())
+    remote = _remote()
+    first = {
+        "id": "https://remote.test/blocks/1",
+        "type": "Block",
+        "actor": remote.ap_id,
+        "object": me.ap_id,
+    }
+    blocks.record_inbound_block(_activity(remote, first))
+    second = {**first, "id": "https://remote.test/blocks/2"}
+    blocks.record_inbound_block(_activity(remote, second))
+    assert Block.objects.get(blocker=remote, blocked=me).activity_id == second["id"]
+
+
+@pytest.mark.django_db
+def test_should_drop_inbound_allows_reciprocal_block(sent):
+    user = _user()
+    _personal(user)
+    target = _remote()
+    blocks.block_actor(user, target)
+    assert blocks.should_drop_inbound(target, "Block") is False
+
+
+@pytest.mark.django_db
+def test_string_undo_block_removes_row(remote_actor):
+    me = _personal(_user())
+    Block.objects.create(
+        blocker=remote_actor, blocked=me, activity_id="https://remote.test/blocks/1"
+    )
+    payload = {
+        "id": "https://remote.test/undos/1",
+        "type": "Undo",
+        "actor": remote_actor.ap_id,
+        "object": "https://remote.test/blocks/1",
+    }
+    activity = _activity(remote_actor, payload)
+
+    from social.handlers import handle_undo
+
+    handle_undo(activity)
+
+    assert not Block.objects.filter(blocker=remote_actor, blocked=me).exists()
+
+
+@pytest.mark.django_db
+def test_inbox_drops_blocked_actor_without_storing(client, keyholder, remote_actor):
+    user = _user()
+    _personal(user)
+    blocks.block_actor(user, remote_actor)
+    payload = {
+        "id": "https://other.test/activities/1",
+        "type": "Create",
+        "actor": REMOTE,
+        "object": {"id": "https://other.test/notes/1", "type": "Note"},
+    }
+    response = post_activity(
+        client, reverse("shared-inbox"), payload, keyholder, key_id=REMOTE_KEY_ID
+    )
+    assert response.status_code == 202
+    assert not Activity.objects.filter(ap_id=payload["id"]).exists()
+
+
+@pytest.mark.django_db
+def test_inbox_stores_reciprocal_block(client, keyholder, remote_actor):
+    user = _user()
+    me = _personal(user)
+    blocks.block_actor(user, remote_actor)
+    payload = {
+        "id": "https://other.test/blocks/1",
+        "type": "Block",
+        "actor": REMOTE,
+        "object": me.ap_id,
+    }
+    response = post_activity(
+        client, reverse("shared-inbox"), payload, keyholder, key_id=REMOTE_KEY_ID
+    )
+    assert response.status_code == 202
+    assert Block.objects.filter(blocker=remote_actor, blocked=me).exists()

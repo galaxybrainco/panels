@@ -23,8 +23,9 @@ source actor for blocks.
   likes, boosts, or comments. Hiding is applied through shared visibility
   helpers and the notification gate.
 - Inbound activities from an actor with any block involving a local actor
-  (either direction) are dropped with 202, except `Undo` so a remote can clear
-  its block. Nothing from that actor is stored.
+  (either direction) are dropped with 202, except `Block` (so reciprocal
+  blocks are recorded) and `Undo` (so a remote can clear its block). Nothing
+  else from that actor is stored.
 - Inbound `Block` from a remote actor is stored, removes follows both ways,
   and is enforced by the same gate. Inbound `Undo Block` removes the row.
 - Blocks suppress notifications in both directions through
@@ -125,6 +126,6 @@ lists/UI, and per-actor (non-personal) block management.
   signed `Block`, and unblocking sends `Undo Block`.
 - Blocks remove follows both ways, suppress notifications both ways, and are
   exposed to feeds through `hidden_actor_ids`.
-- Inbound activities from blocked actors are dropped, while `Undo Block` can
-  clear a remote block.
+- Inbound activities from blocked actors are dropped, while reciprocal
+  `Block` and `Undo Block` are still processed.
 - Full suite passes, no migration drift, lint clean.
