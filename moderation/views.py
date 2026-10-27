@@ -2,6 +2,7 @@ import json
 
 from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_required
+from django.core.exceptions import ValidationError
 from django.http import Http404, JsonResponse
 from django.shortcuts import get_object_or_404
 from django.utils.dateparse import parse_datetime
@@ -257,6 +258,8 @@ def reports_queue(request):
             category=data.get("category", "other"),
             forward=_bool(data.get("forward", False)),
         )
+    except services.InvalidPayloadError:
+        return _error("invalid_payload", 400)
     except report_services.InvalidTargetError as exc:
         raise Http404 from exc
     except report_services.InvalidReportError:
@@ -289,14 +292,19 @@ def assign_report(request, report_id):
         data = _payload(request)
         assigned = None
         if data.get("assigned_to"):
-            assigned = (
-                get_user_model()
-                .objects.filter(pk=data["assigned_to"], is_staff=True)
-                .first()
-            )
+            try:
+                assigned = (
+                    get_user_model()
+                    .objects.filter(pk=data["assigned_to"], is_staff=True)
+                    .first()
+                )
+            except ValidationError, ValueError, TypeError:
+                return _error("invalid_user", 400)
             if assigned is None:
                 return _error("invalid_user", 400)
         report = report_services.assign_report(report, request.user, assigned)
+    except services.InvalidPayloadError:
+        return _error("invalid_payload", 400)
     except report_services.NotPermittedError:
         return _error("not_permitted", 403)
     except report_services.ReportClosedError:
@@ -308,11 +316,13 @@ def assign_report(request, report_id):
 @require_http_methods(["POST"])
 def resolve_report(request, report_id):
     report = _report_or_404(request, report_id)
-    data = _payload(request)
     try:
+        data = _payload(request)
         report = report_services.resolve_report(
             report, request.user, data.get("status"), data.get("resolution")
         )
+    except services.InvalidPayloadError:
+        return _error("invalid_payload", 400)
     except report_services.NotPermittedError:
         return _error("not_permitted", 403)
     except report_services.InvalidReportError:
@@ -327,7 +337,9 @@ def resolve_report(request, report_id):
 def forward_report(request, report_id):
     report = _report_or_404(request, report_id)
     try:
-        report = report_services.forward_report(report)
+        report = report_services.forward_report(report, moderator=request.user)
+    except report_services.ReportClosedError:
+        return _error("closed", 409)
     except block_services.NoActorError:
         return _error("no_actor", 409)
     except report_services.NotForwardableError:
@@ -339,9 +351,11 @@ def forward_report(request, report_id):
 @require_http_methods(["POST"])
 def comment_action(request, report_id):
     report = _report_or_404(request, report_id)
-    data = _payload(request)
     try:
+        data = _payload(request)
         report_services.comment_action(report, request.user, data.get("action"))
+    except services.InvalidPayloadError:
+        return _error("invalid_payload", 400)
     except report_services.InvalidTargetError:
         return _error("invalid_target", 400)
     except report_services.NotPermittedError:
@@ -371,6 +385,8 @@ def actor_notes(request, actor_id):
     try:
         data = _payload(request)
         note = report_services.add_note(request.user, actor, data.get("body"))
+    except services.InvalidPayloadError:
+        return _error("invalid_payload", 400)
     except report_services.NotPermittedError:
         return _error("not_permitted", 403)
     except report_services.InvalidReportError:

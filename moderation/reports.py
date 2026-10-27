@@ -158,7 +158,11 @@ def report_target(
     return report
 
 
-def forward_report(report):
+def forward_report(report, moderator=None):
+    if report.status not in (ReportStatus.OPEN, ReportStatus.ASSIGNED):
+        raise ReportClosedError
+    if report.forwarded_at is not None:
+        return report
     if report.reporter_user is None:
         raise NotForwardableError
     if report.target_actor_id:
@@ -184,7 +188,7 @@ def forward_report(report):
     report.forwarded_at = timezone.now()
     report.save(update_fields=["forwarded_at", "updated_at"])
     record_action(
-        report.reporter_user,
+        moderator or report.reporter_user,
         "report.forwarded",
         target=f"report:{report.id}",
         data={"object": object_url, "activity": activity_id},
@@ -241,7 +245,7 @@ def comment_action(report, user, action):
     if comment is None:
         raise InvalidTargetError
     comic = comment.page.series.comic
-    if not permissions.can_moderate(user, comic):
+    if not (user.is_staff or permissions.can_moderate(user, comic)):
         raise NotPermittedError
     from social import moderation as comment_moderation
 

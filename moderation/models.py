@@ -127,7 +127,7 @@ class Report(UUIDModel):
     )
     reporter_user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
-        on_delete=models.SET_NULL,
+        on_delete=models.CASCADE,
         null=True,
         blank=True,
         related_name="reports_made",

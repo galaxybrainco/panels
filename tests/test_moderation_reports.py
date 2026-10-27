@@ -468,3 +468,94 @@ def test_notes_and_audit_endpoints_are_staff_only(client):
     assert (
         client.get("/moderation/audit").json()["audit"][0]["action"] == "note.created"
     )
+
+
+@pytest.mark.django_db
+def test_deleting_reporter_removes_their_reports():
+    user = _user()
+    actor = _remote()
+    report = reports.report_target(
+        user, target_type="actor", target_id=actor.id, reason="x"
+    )
+    user.delete()
+    assert not Report.objects.filter(pk=report.pk).exists()
+
+
+@pytest.mark.django_db
+def test_report_endpoint_rejects_malformed_bodies(client):
+    client.force_login(_user())
+    assert (
+        client.post(
+            "/moderation/reports", data="not json", content_type="text/plain"
+        ).status_code
+        == 400
+    )
+    assert (
+        client.post(
+            "/moderation/reports",
+            data=b"{broken",
+            content_type="application/json",
+        ).status_code
+        == 400
+    )
+
+
+@pytest.mark.django_db
+def test_assign_rejects_malformed_user(client):
+    owner, _, page, _ = _scene()
+    report = reports.report_target(
+        owner, target_type="page", target_id=page.id, reason="x"
+    )
+    staff = _user(staff=True)
+    client.force_login(staff)
+    response = client.post(
+        f"/moderation/reports/{report.id}/assign",
+        data='{"assigned_to": "not-a-uuid"}',
+        content_type="application/json",
+    )
+    assert response.status_code == 400
+
+
+@pytest.mark.django_db
+def test_forwarding_respects_state_and_is_idempotent(sent):
+    user = _user()
+    create_local_actor(f"u{uuid4().hex[:8]}", user=user)
+    actor = _remote()
+    report = reports.report_target(
+        user, target_type="actor", target_id=actor.id, reason="x", forward=True
+    )
+    reports.forward_report(report)
+    assert len(sent) == 1
+    assert ModerationAudit.objects.filter(action="report.forwarded").count() == 1
+
+    report.status = "resolved"
+    report.save(update_fields=["status"])
+    with pytest.raises(reports.ReportClosedError):
+        reports.forward_report(report)
+
+
+@pytest.mark.django_db
+def test_forwarding_audits_the_acting_moderator(sent):
+    user = _user()
+    create_local_actor(f"u{uuid4().hex[:8]}", user=user)
+    actor = _remote()
+    staff = _user(staff=True)
+    report = reports.report_target(
+        user, target_type="actor", target_id=actor.id, reason="x"
+    )
+    reports.forward_report(report, moderator=staff)
+    audit = ModerationAudit.objects.get(action="report.forwarded")
+    assert audit.actor == staff
+
+
+@pytest.mark.django_db
+def test_staff_can_moderate_comments_without_a_comic_role():
+    _, _, _, comment = _scene()
+    reporter = _user()
+    staff = _user(staff=True)
+    report = reports.report_target(
+        reporter, target_type="comment", target_id=comment.id, reason="x"
+    )
+    reports.comment_action(report, staff, "hide")
+    comment.refresh_from_db()
+    assert comment.status == "hidden"
