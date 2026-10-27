@@ -6,6 +6,8 @@ from django.utils import timezone
 from actors.models import Actor
 from comics import permissions
 from comics.models import Comic, ComicRole, Page
+from federation.activitypub import build_activity
+from federation.delivery import fan_out
 from moderation import blocks as block_services
 from moderation.models import (
     ModerationAudit,
@@ -175,9 +177,6 @@ def forward_report(report):
     reporter = block_services.personal_actor(report.reporter_user)
     if reporter is None:
         raise block_services.NoActorError
-    from federation.activitypub import build_activity
-    from federation.delivery import fan_out
-
     activity_id = f"{reporter.ap_id}#flags/{uuid4()}"
     payload = build_activity("Flag", reporter, object_url, activity_id=activity_id)
     payload["content"] = f"{report.category}: {report.reason}"
@@ -292,3 +291,43 @@ def audit_for(user, *, target="", limit=100):
     if target:
         query = query.filter(target=target)
     return query[: min(int(limit), 500)]
+
+
+def record_inbound_flag(activity):
+    raw = activity.payload.get("object")
+    if isinstance(raw, dict):
+        raw = raw.get("id") or raw.get("object")
+    object_url = raw if isinstance(raw, str) else ""
+    if not object_url:
+        return None
+    target_field = None
+    target = Actor.objects.filter(ap_id=object_url, domain="").first()
+    if target is not None:
+        target_field = "target_actor"
+    else:
+        target = Page.objects.filter(ap_id=object_url).first()
+        if target is not None:
+            target_field = "target_page"
+    if target is None:
+        target = Comment.objects.filter(ap_id=object_url).first()
+        if target is not None:
+            target_field = "target_comment"
+    if target is None:
+        return None
+    report, created = Report.objects.get_or_create(
+        remote_activity_id=activity.ap_id,
+        defaults={
+            "reporter_actor": activity.actor,
+            "reason": str(activity.payload.get("content") or "remote flag"),
+            "category": ReportCategory.OTHER,
+            target_field: target,
+        },
+    )
+    if created:
+        record_action(
+            None,
+            "report.created",
+            target=f"report:{report.id}",
+            data={"remote_actor": activity.actor.ap_id, "activity": activity.ap_id},
+        )
+    return report

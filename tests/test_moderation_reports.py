@@ -5,8 +5,11 @@ from django.contrib.auth import get_user_model
 from django.db import IntegrityError, transaction
 
 from actors.models import Actor, ActorType
+from actors.services import create_local_actor
 from comics.models import ComicRole
 from comics.services import create_comic, create_page, create_series
+from federation.models import Activity
+from moderation import blocks as block_services
 from moderation import reports
 from moderation.models import (
     ModerationAudit,
@@ -165,3 +168,115 @@ def test_notes_are_staff_only_and_audited():
         reports.add_note(_user(), actor, "nope")
     with pytest.raises(reports.NotPermittedError):
         list(reports.notes_for(_user(), actor))
+
+
+@pytest.fixture
+def sent(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        "moderation.reports.fan_out",
+        lambda payload, inboxes, actor: calls.append((payload, inboxes)),
+        raising=False,
+    )
+    return calls
+
+
+def _activity(actor, payload):
+    return Activity.objects.create(
+        ap_id=payload["id"],
+        type=payload.get("type", ""),
+        actor=actor,
+        payload=payload,
+    )
+
+
+@pytest.mark.django_db
+def test_forwarding_remote_actor_emits_flag(sent):
+    user = _user()
+    create_local_actor(f"u{uuid4().hex[:8]}", user=user)
+    actor = _remote()
+    report = reports.report_target(
+        user, target_type="actor", target_id=actor.id, reason="abuse", forward=True
+    )
+    report.refresh_from_db()
+    assert report.forwarded_at is not None
+    assert len(sent) == 1
+    payload, inboxes = sent[0]
+    assert payload["type"] == "Flag"
+    assert payload["object"] == actor.ap_id
+    assert payload["content"] == "other: abuse"
+    assert inboxes == ["https://remote.test/inbox"]
+    assert ModerationAudit.objects.filter(action="report.forwarded").count() == 1
+
+
+@pytest.mark.django_db
+def test_forwarding_requires_personal_actor(sent):
+    user = _user()
+    actor = _remote()
+    report = reports.report_target(
+        user, target_type="actor", target_id=actor.id, reason="x"
+    )
+    with pytest.raises(block_services.NoActorError):
+        reports.forward_report(report)
+    report.refresh_from_db()
+    assert report.forwarded_at is None
+
+
+@pytest.mark.django_db
+def test_forwarding_local_target_is_rejected(sent):
+    user = _user()
+    create_local_actor(f"u{uuid4().hex[:8]}", user=user)
+    _, _, page, _ = _scene()
+    report = reports.report_target(
+        user, target_type="page", target_id=page.id, reason="x"
+    )
+    with pytest.raises(reports.NotForwardableError):
+        reports.forward_report(report)
+
+
+@pytest.mark.django_db
+def test_forwarding_remote_comment_uses_comment_author(sent):
+    user = _user()
+    create_local_actor(f"u{uuid4().hex[:8]}", user=user)
+    _, _, _, comment = _scene()
+    reports.report_target(
+        user, target_type="comment", target_id=comment.id, reason="x", forward=True
+    )
+    payload, inboxes = sent[0]
+    assert payload["object"] == comment.ap_id
+    assert inboxes == ["https://remote.test/inbox"]
+
+
+@pytest.mark.django_db
+def test_inbound_flag_stores_and_dedupes():
+    _, _, page, _ = _scene()
+    remote = _remote(handle="reporter")
+    payload = {
+        "id": "https://remote.test/flags/1",
+        "type": "Flag",
+        "actor": remote.ap_id,
+        "object": page.ap_id,
+        "content": "spam",
+    }
+    activity = _activity(remote, payload)
+    data = reports.record_inbound_flag(activity)
+    assert data.reporter_actor == remote
+    assert data.target_page == page
+    assert data.remote_activity_id == payload["id"]
+    again = reports.record_inbound_flag(activity)
+    assert again.pk == data.pk
+    assert Report.objects.count() == 1
+
+
+@pytest.mark.django_db
+def test_inbound_flag_unknown_target_is_ignored():
+    remote = _remote(handle="reporter")
+    payload = {
+        "id": "https://remote.test/flags/2",
+        "type": "Flag",
+        "actor": remote.ap_id,
+        "object": "https://elsewhere.test/actors/nobody",
+        "content": "spam",
+    }
+    assert reports.record_inbound_flag(_activity(remote, payload)) is None
+    assert Report.objects.count() == 0
