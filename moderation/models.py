@@ -87,3 +87,139 @@ class Block(UUIDModel):
                 name="no_self_block",
             ),
         ]
+
+
+class ReportCategory(models.TextChoices):
+    SPAM = "spam", "Spam"
+    ABUSE = "abuse", "Abuse"
+    ILLEGAL = "illegal", "Illegal"
+    OTHER = "other", "Other"
+
+
+class ReportStatus(models.TextChoices):
+    OPEN = "open", "Open"
+    ASSIGNED = "assigned", "Assigned"
+    RESOLVED = "resolved", "Resolved"
+    REJECTED = "rejected", "Rejected"
+
+
+class Report(UUIDModel):
+    target_actor = models.ForeignKey(
+        "actors.Actor",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="reports_about",
+    )
+    target_page = models.ForeignKey(
+        "comics.Page",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="reports_about",
+    )
+    target_comment = models.ForeignKey(
+        "social.Comment",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="reports_about",
+    )
+    reporter_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="reports_made",
+    )
+    reporter_actor = models.ForeignKey(
+        "actors.Actor",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="reports_sent",
+    )
+    reason = models.TextField()
+    category = models.CharField(
+        max_length=16, choices=ReportCategory.choices, default=ReportCategory.OTHER
+    )
+    status = models.CharField(
+        max_length=16, choices=ReportStatus.choices, default=ReportStatus.OPEN
+    )
+    assigned_to = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="assigned_reports",
+    )
+    resolution = models.TextField(blank=True, default="")
+    forwarded_at = models.DateTimeField(null=True, blank=True)
+    remote_activity_id = models.CharField(max_length=255, blank=True, default="")
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        target_actor__isnull=False,
+                        target_page__isnull=True,
+                        target_comment__isnull=True,
+                    )
+                    | models.Q(
+                        target_actor__isnull=True,
+                        target_page__isnull=False,
+                        target_comment__isnull=True,
+                    )
+                    | models.Q(
+                        target_actor__isnull=True,
+                        target_page__isnull=True,
+                        target_comment__isnull=False,
+                    )
+                ),
+                name="report_exactly_one_target",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(reporter_user__isnull=False, reporter_actor__isnull=True)
+                    | models.Q(reporter_user__isnull=True, reporter_actor__isnull=False)
+                ),
+                name="report_exactly_one_reporter",
+            ),
+            models.UniqueConstraint(
+                fields=["remote_activity_id"],
+                condition=~models.Q(remote_activity_id=""),
+                name="unique_remote_report_activity",
+            ),
+        ]
+
+
+class ModerationNote(UUIDModel):
+    author = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="moderation_notes",
+    )
+    actor = models.ForeignKey(
+        "actors.Actor", on_delete=models.CASCADE, related_name="moderation_notes"
+    )
+    body = models.TextField()
+
+    class Meta:
+        ordering = ["-created_at"]
+
+
+class ModerationAudit(UUIDModel):
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="moderation_audit",
+    )
+    action = models.CharField(max_length=64)
+    target = models.CharField(max_length=255, blank=True, default="")
+    data = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
