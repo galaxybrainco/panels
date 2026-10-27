@@ -1,3 +1,4 @@
+import json
 from uuid import uuid4
 
 import pytest
@@ -280,3 +281,190 @@ def test_inbound_flag_unknown_target_is_ignored():
     }
     assert reports.record_inbound_flag(_activity(remote, payload)) is None
     assert Report.objects.count() == 0
+
+
+@pytest.mark.django_db
+def test_report_endpoint_creates_and_dedupes(client):
+    user = _user()
+    actor = _remote()
+    client.force_login(user)
+    response = client.post(
+        "/moderation/reports",
+        data=json.dumps(
+            {"target_type": "actor", "target_id": str(actor.id), "reason": "x"}
+        ),
+        content_type="application/json",
+    )
+    assert response.status_code == 201
+    first_id = response.json()["id"]
+    response = client.post(
+        "/moderation/reports",
+        data=json.dumps(
+            {"target_type": "actor", "target_id": str(actor.id), "reason": "y"}
+        ),
+        content_type="application/json",
+    )
+    assert response.json()["id"] == first_id
+    assert Report.objects.count() == 1
+
+
+@pytest.mark.django_db
+def test_report_endpoint_validation(client):
+    user = _user()
+    client.force_login(user)
+    assert (
+        client.post(
+            "/moderation/reports",
+            data=json.dumps(
+                {"target_type": "actor", "target_id": str(uuid4()), "reason": "x"}
+            ),
+            content_type="application/json",
+        ).status_code
+        == 404
+    )
+    assert (
+        client.post(
+            "/moderation/reports",
+            data=json.dumps(
+                {"target_type": "bogus", "target_id": str(uuid4()), "reason": "x"}
+            ),
+            content_type="application/json",
+        ).status_code
+        == 400
+    )
+    actor = _remote()
+    response = client.post(
+        "/moderation/reports",
+        data=json.dumps(
+            {"target_type": "actor", "target_id": str(actor.id), "reason": " "}
+        ),
+        content_type="application/json",
+    )
+    assert response.status_code == 400
+
+
+@pytest.mark.django_db
+def test_queue_scoping_and_filters(client):
+    owner, comic, page, _ = _scene()
+    editor = _user()
+    ComicRole.objects.create(comic=comic, user=editor, role=ComicRole.Role.MODERATOR)
+    staff = _user(staff=True)
+    page_report = reports.report_target(
+        owner, target_type="page", target_id=page.id, reason="x"
+    )
+    reports.report_target(
+        owner, target_type="actor", target_id=_remote(handle="reported").id, reason="x"
+    )
+
+    client.force_login(editor)
+    ids = [item["id"] for item in client.get("/moderation/reports").json()["reports"]]
+    assert ids == [str(page_report.id)]
+
+    client.force_login(staff)
+    assert len(client.get("/moderation/reports").json()["reports"]) == 2
+    assert client.get("/moderation/reports?status=bogus").status_code == 400
+
+
+@pytest.mark.django_db
+def test_report_detail_hidden_from_outsiders(client):
+    owner, _, page, _ = _scene()
+    report = reports.report_target(
+        owner, target_type="page", target_id=page.id, reason="x"
+    )
+    client.force_login(_user())
+    assert client.get(f"/moderation/reports/{report.id}").status_code == 404
+
+
+@pytest.mark.django_db
+def test_assign_is_staff_only(client):
+    owner, _, page, _ = _scene()
+    report = reports.report_target(
+        owner, target_type="page", target_id=page.id, reason="x"
+    )
+    client.force_login(owner)
+    assert client.post(f"/moderation/reports/{report.id}/assign").status_code == 403
+    staff = _user(staff=True)
+    client.force_login(staff)
+    response = client.post(f"/moderation/reports/{report.id}/assign")
+    assert response.status_code == 200
+    assert response.json()["status"] == "assigned"
+
+
+@pytest.mark.django_db
+def test_resolve_and_closed_reports(client):
+    owner, _, page, comment = _scene()
+    report = reports.report_target(
+        owner, target_type="page", target_id=page.id, reason="x"
+    )
+    fresh = reports.report_target(
+        owner, target_type="comment", target_id=comment.id, reason="x"
+    )
+    client.force_login(owner)
+    response = client.post(
+        f"/moderation/reports/{report.id}/resolve",
+        data='{"status": "resolved", "resolution": "handled"}',
+        content_type="application/json",
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "resolved"
+    again = client.post(
+        f"/moderation/reports/{report.id}/resolve",
+        data='{"status": "rejected", "resolution": "again"}',
+        content_type="application/json",
+    )
+    assert again.status_code == 409
+    bad = client.post(
+        f"/moderation/reports/{fresh.id}/resolve",
+        data='{"status": "open", "resolution": "x"}',
+        content_type="application/json",
+    )
+    assert bad.status_code == 400
+
+
+@pytest.mark.django_db
+def test_comment_actions_from_queue(client):
+    owner, _, _, comment = _scene()
+    report = reports.report_target(
+        owner, target_type="comment", target_id=comment.id, reason="x"
+    )
+    client.force_login(owner)
+    response = client.post(
+        f"/moderation/reports/{report.id}/comment-action",
+        data='{"action": "hide"}',
+        content_type="application/json",
+    )
+    assert response.status_code == 200
+    comment.refresh_from_db()
+    assert comment.status == "hidden"
+    assert ModerationAudit.objects.filter(action="comment.hidden").exists()
+    assert (
+        client.post(
+            f"/moderation/reports/{report.id}/comment-action",
+            data='{"action": "nope"}',
+            content_type="application/json",
+        ).status_code
+        == 400
+    )
+
+
+@pytest.mark.django_db
+def test_notes_and_audit_endpoints_are_staff_only(client):
+    actor = _remote()
+    staff = _user(staff=True)
+    client.force_login(_user())
+    assert client.get(f"/moderation/actors/{actor.id}/notes").status_code == 403
+    assert client.get("/moderation/audit").status_code == 403
+    client.force_login(staff)
+    response = client.post(
+        f"/moderation/actors/{actor.id}/notes",
+        data='{"body": "watching"}',
+        content_type="application/json",
+    )
+    assert response.status_code == 201
+    assert (
+        client.get(f"/moderation/actors/{actor.id}/notes").json()["notes"][0]["body"]
+        == "watching"
+    )
+    assert (
+        client.get("/moderation/audit").json()["audit"][0]["action"] == "note.created"
+    )

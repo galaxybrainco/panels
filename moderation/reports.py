@@ -331,3 +331,26 @@ def record_inbound_flag(activity):
             data={"remote_actor": activity.actor.ap_id, "activity": activity.ap_id},
         )
     return report
+
+
+def queue_reports(user, *, status=None, assigned=None, limit=50):
+    query = visible_reports(user).select_related(
+        "target_actor",
+        "target_page__series__comic",
+        "target_comment__actor",
+        "target_comment__page__series__comic",
+        "reporter_user",
+        "reporter_actor",
+        "assigned_to",
+    )
+    if status and status != "all":
+        if status not in {choice.value for choice in ReportStatus}:
+            raise InvalidReportError
+        query = query.filter(status=status)
+    if assigned == "me":
+        query = query.filter(assigned_to=user)
+    elif assigned == "unassigned":
+        query = query.filter(assigned_to__isnull=True)
+    elif assigned not in (None, "", "any"):
+        raise InvalidReportError
+    return query.order_by("-created_at")[: min(int(limit), 200)]
