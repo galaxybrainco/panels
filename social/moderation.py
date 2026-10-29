@@ -6,7 +6,7 @@ from social.models import Comment, CommentBan, CommentStatus
 
 
 def _require_moderator(user, comic):
-    if not permissions.can_moderate(user, comic):
+    if not (user.is_staff or permissions.can_moderate(user, comic)):
         raise PermissionDenied("You cannot moderate this comic's comments.")
 
 

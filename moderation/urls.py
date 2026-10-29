@@ -30,4 +30,36 @@ urlpatterns = [
         views.blocks,
         name="moderation-blocks",
     ),
+    path("moderation/reports", views.reports_queue, name="moderation-reports"),
+    path(
+        "moderation/reports/<uuid:report_id>",
+        views.report_detail,
+        name="moderation-report-detail",
+    ),
+    path(
+        "moderation/reports/<uuid:report_id>/assign",
+        views.assign_report,
+        name="moderation-report-assign",
+    ),
+    path(
+        "moderation/reports/<uuid:report_id>/resolve",
+        views.resolve_report,
+        name="moderation-report-resolve",
+    ),
+    path(
+        "moderation/reports/<uuid:report_id>/forward",
+        views.forward_report,
+        name="moderation-report-forward",
+    ),
+    path(
+        "moderation/reports/<uuid:report_id>/comment-action",
+        views.comment_action,
+        name="moderation-report-comment-action",
+    ),
+    path(
+        "moderation/actors/<uuid:actor_id>/notes",
+        views.actor_notes,
+        name="moderation-actor-notes",
+    ),
+    path("moderation/audit", views.audit_log, name="moderation-audit"),
 ]
