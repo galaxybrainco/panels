@@ -223,3 +223,29 @@ class ModerationAudit(UUIDModel):
 
     class Meta:
         ordering = ["-created_at"]
+
+
+class AccountState(models.TextChoices):
+    NORMAL = "normal", "Normal"
+    LIMITED = "limited", "Limited"
+    SUSPENDED = "suspended", "Suspended"
+    FROZEN = "frozen", "Frozen"
+    DISABLED = "disabled", "Disabled"
+
+
+class AccountModeration(UUIDModel):
+    actor = models.OneToOneField(
+        "actors.Actor", on_delete=models.CASCADE, related_name="moderation"
+    )
+    state = models.CharField(
+        max_length=16, choices=AccountState.choices, default=AccountState.NORMAL
+    )
+    force_sensitive = models.BooleanField(default=False)
+    reason = models.TextField(blank=True, default="")
+    changed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="account_moderation_changes",
+    )

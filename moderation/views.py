@@ -10,6 +10,7 @@ from django.views.decorators.http import require_http_methods
 
 from actors.models import Actor
 from comics.models import Page
+from moderation import accounts as account_services
 from moderation import blocks as block_services
 from moderation import reports as report_services
 from moderation import services
@@ -422,3 +423,49 @@ def audit_log(request):
             ]
         }
     )
+
+
+def _serialize_account(actor):
+    record = account_services.account_moderation(actor)
+    return {
+        "actor": str(actor.id),
+        "state": record.state,
+        "force_sensitive": record.force_sensitive,
+        "reason": record.reason,
+        "changed_by": record.changed_by.email if record.changed_by else None,
+    }
+
+
+@login_required
+@require_http_methods(["GET"])
+def account_detail(request, actor_id):
+    if not request.user.is_staff:
+        return _error("not_permitted", 403)
+    actor = get_object_or_404(Actor, pk=actor_id)
+    return JsonResponse(_serialize_account(actor))
+
+
+@login_required
+@require_http_methods(["POST"])
+def account_action(request, actor_id):
+    if not request.user.is_staff:
+        return _error("not_permitted", 403)
+    actor = get_object_or_404(Actor, pk=actor_id)
+    try:
+        data = _payload(request)
+        account_services.apply_account_action(
+            actor,
+            request.user,
+            data.get("action"),
+            reason=data.get("reason"),
+            enabled=data.get("enabled"),
+        )
+    except services.InvalidPayloadError:
+        return _error("invalid_payload", 400)
+    except account_services.InvalidActionError:
+        return _error("invalid_action", 400)
+    except report_services.NotPermittedError:
+        return _error("not_permitted", 403)
+    except account_services.LocalOnlyError:
+        return _error("local_only", 409)
+    return JsonResponse(_serialize_account(actor))

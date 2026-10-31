@@ -62,4 +62,14 @@ urlpatterns = [
         name="moderation-actor-notes",
     ),
     path("moderation/audit", views.audit_log, name="moderation-audit"),
+    path(
+        "moderation/accounts/<uuid:actor_id>",
+        views.account_detail,
+        name="moderation-account-detail",
+    ),
+    path(
+        "moderation/accounts/<uuid:actor_id>/action",
+        views.account_action,
+        name="moderation-account-action",
+    ),
 ]
