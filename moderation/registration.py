@@ -45,7 +45,9 @@ def email_domains():
 def email_domain_blocked(email):
     if not isinstance(email, str) or "@" not in email:
         return False
-    domain = email.rsplit("@", 1)[1].strip().lower()
+    domain = normalize_domain(email.rsplit("@", 1)[1].strip())
+    if not domain:
+        return False
     return BlockedEmailDomain.objects.filter(domain=domain).exists()
 
 

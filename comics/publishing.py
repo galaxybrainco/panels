@@ -39,6 +39,14 @@ def publish(page, *, published_by=None, when=None, require_scheduled=False):
     if require_scheduled and locked.status != PageStatus.SCHEDULED:
         return locked
     _enforce_publish_gates(locked)
+    from moderation import accounts
+
+    author = published_by or locked.scheduled_by or locked.author
+    if author is not None:
+        if not accounts.can_post(author):
+            raise ValidationError({"status": "This account cannot publish."})
+        if accounts.is_force_sensitive(author):
+            locked.sensitive = True
     locked.status = PageStatus.PUBLISHED
     locked.published_at = when or timezone.now()
     locked.published_by = published_by
@@ -52,6 +60,7 @@ def publish(page, *, published_by=None, when=None, require_scheduled=False):
             "published_by",
             "scheduled_for",
             "ap_id",
+            "sensitive",
             "updated_at",
         ]
     )
@@ -105,6 +114,10 @@ def schedule_page(user, page, when):
         raise ValidationError(
             {"scheduled_for": "The scheduled time must be in the future."}
         )
+    from moderation import accounts
+
+    if not accounts.can_post(user):
+        raise ValidationError({"status": "This account cannot publish."})
     locked = Page.objects.select_for_update().get(pk=page.pk)
     if locked.status == PageStatus.PUBLISHED:
         raise ValidationError({"status": "Unpublish the page before scheduling it."})

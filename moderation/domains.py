@@ -1,3 +1,7 @@
+from urllib.parse import urlsplit
+
+from django.conf import settings
+
 from actors.models import Instance
 from moderation.reports import NotPermittedError, record_action
 from moderation.services import InvalidDomainError, normalize_domain
@@ -17,9 +21,17 @@ ACTIONS = {
 }
 
 
+def _local_domain():
+    url = getattr(settings, "INSTANCE_URL", "") or ""
+    host = normalize_domain(urlsplit(url).hostname or "")
+    if host:
+        return host
+    return normalize_domain(getattr(settings, "INSTANCE_DOMAIN", "") or "")
+
+
 def _instance(domain, create=True):
     host = normalize_domain(domain)
-    if not host:
+    if not host or host == _local_domain():
         raise InvalidDomainError
     if create:
         instance, _ = Instance.objects.get_or_create(domain=host)

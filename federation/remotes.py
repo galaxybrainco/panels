@@ -1,5 +1,4 @@
 import base64
-from urllib.parse import urlparse
 
 import base58
 from django.core.cache import cache
@@ -46,9 +45,9 @@ def fetch_remote_actor(ap_id):
     failed_key = f"federation:fetch-failed:{ap_id}"
     if cache.get(failed_key):
         return None
-    domain = urlparse(ap_id).netloc
     from moderation import accounts
 
+    domain = accounts.domain_host(ap_id)
     if not accounts.allowed_domain(domain):
         cache.set(failed_key, 1, timeout=FETCH_FAILED_TTL)
         return None
@@ -59,7 +58,7 @@ def fetch_remote_actor(ap_id):
     if not isinstance(document, dict):
         cache.set(failed_key, 1, timeout=FETCH_FAILED_TTL)
         return None
-    domain = urlparse(ap_id).netloc
+    domain = accounts.domain_host(ap_id)
     Instance.objects.get_or_create(domain=domain)
     public_key = document.get("publicKey")
     public_key_pem = (

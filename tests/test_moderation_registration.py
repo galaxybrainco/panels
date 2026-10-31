@@ -70,3 +70,11 @@ def test_registration_endpoints(client):
     assert client.get("/moderation/registration-blocks/ip-blocks").json()[
         "addresses"
     ] == ["203.0.113.0/24"]
+
+
+@pytest.mark.django_db
+def test_email_domain_blocks_normalize_idn():
+    staff = _user(staff=True)
+    registration.add_email_domain("MÜNICH.example", staff)
+    assert registration.email_domain_blocked("x@münich.example") is True
+    assert registration.email_domain_blocked("x@xn--mnich-kva.example") is True

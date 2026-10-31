@@ -1,4 +1,5 @@
 import logging
+from urllib.parse import urlsplit
 
 from django.conf import settings
 from django.core.mail import send_mail
@@ -8,6 +9,7 @@ from actors.models import Actor, Instance
 from comics.models import Page
 from moderation.models import AccountModeration, AccountState
 from moderation.reports import NotPermittedError, record_action
+from moderation.services import normalize_domain
 
 logger = logging.getLogger(__name__)
 
@@ -85,20 +87,54 @@ def can_post(user):
     }
 
 
+def domain_host(value):
+    raw = str(value or "")
+    if "://" in raw:
+        return normalize_domain(urlsplit(raw).hostname or "")
+    return normalize_domain(raw)
+
+
+def _domain_chain(host):
+    parts = host.split(".")
+    return [".".join(parts[index:]) for index in range(len(parts) - 1)]
+
+
+def domain_instance(value):
+    host = domain_host(value)
+    if not host:
+        return None
+    chain = _domain_chain(host)
+    rows = {row.domain: row for row in Instance.objects.filter(domain__in=chain)}
+    for candidate in chain:
+        row = rows.get(candidate)
+        if row is not None:
+            return row
+    return None
+
+
 def publicly_visible(actor):
     if is_limited(actor) or is_suspended(actor):
         return False
     if actor.domain:
-        instance = Instance.objects.filter(domain=actor.domain).first()
+        instance = domain_instance(actor.domain)
         if instance is not None and (instance.blocked or instance.silenced):
             return False
     return True
 
 
-def allowed_domain(domain):
-    if not domain:
+def page_actor_visible(page):
+    try:
+        actor = page.series.comic.actor
+    except AttributeError:
         return True
-    instance = Instance.objects.filter(domain=domain).first()
+    return publicly_visible(actor)
+
+
+def allowed_domain(domain):
+    host = domain_host(domain)
+    if not host:
+        return True
+    instance = domain_instance(host)
     if instance is not None and instance.blocked:
         return False
     if settings.FEDERATION_ALLOWLIST_ENABLED:

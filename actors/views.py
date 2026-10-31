@@ -15,6 +15,10 @@ JRD_CONTENT_TYPE = "application/jrd+json"
 
 def actor_detail(request, handle):
     actor = get_object_or_404(Actor, handle=handle, domain="")
+    from moderation import accounts
+
+    if not accounts.publicly_visible(actor):
+        raise Http404
     response = JsonResponse(
         actor_to_activitypub(actor), content_type=ACTIVITYPUB_CONTENT_TYPE
     )
@@ -37,7 +41,9 @@ def webfinger(request):
     if handle is None:
         raise Http404
     actor = Actor.objects.filter(handle=handle, domain="").first()
-    if actor is None:
+    from moderation import accounts
+
+    if actor is None or not accounts.publicly_visible(actor):
         raise Http404
     document = {
         "subject": f"acct:{actor.handle}@{settings.INSTANCE_DOMAIN}",

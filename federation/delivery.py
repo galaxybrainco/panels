@@ -1,5 +1,3 @@
-from urllib.parse import urlparse
-
 from actors.models import Actor
 from federation.models import Delivery
 
@@ -27,7 +25,7 @@ def enqueue_delivery(activity, inbox_url, actor: Actor) -> Delivery:
 def _allowed(url):
     from moderation import accounts
 
-    return accounts.allowed_domain(urlparse(url).netloc)
+    return accounts.allowed_domain(url)
 
 
 def fan_out(activity, inbox_urls, actor: Actor):

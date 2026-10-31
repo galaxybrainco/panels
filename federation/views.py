@@ -14,7 +14,11 @@ def shared_inbox(request):
 
 @csrf_exempt
 def actor_inbox(request, handle):
-    get_object_or_404(Actor, handle=handle, domain="")
+    actor = get_object_or_404(Actor, handle=handle, domain="")
+    from moderation import accounts
+
+    if not accounts.publicly_visible(actor):
+        raise Http404
     return process_inbox(request)
 
 
@@ -53,4 +57,8 @@ def actor_following(request, handle):
 
 def actor_featured(request, handle):
     actor = get_object_or_404(Actor, handle=handle, domain="")
+    from moderation import accounts
+
+    if not accounts.publicly_visible(actor):
+        raise Http404
     return JsonResponse(collections.empty_collection(actor.featured))

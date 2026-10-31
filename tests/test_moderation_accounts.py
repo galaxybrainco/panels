@@ -1,20 +1,28 @@
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
 from django.contrib.auth import get_user_model
 from django.core import mail
+from django.core.cache import cache
 from django.core.exceptions import PermissionDenied, ValidationError
+from django.test import override_settings
+from django.urls import reverse
 from django.utils import timezone
 
 from actors.models import Actor, ActorType, Instance
 from actors.services import create_local_actor
-from comics.models import Page
+from comics import publishing
+from comics.models import Page, PageStatus
 from comics.publishing import publish_page
 from comics.services import create_comic, create_page, create_series
 from federation.delivery import fan_out
 from federation.models import Activity, Delivery
-from moderation import accounts
+from federation.remotes import fetch_remote_actor
+from moderation import accounts, domains
 from moderation.models import AccountState, ModerationAudit
+from social.comments import federatable_page
+from social.handlers import handle_follow
 from social.models import Follow, FollowStatus
 from social.services import follow, follower_inboxes
 
@@ -212,3 +220,101 @@ def test_frozen_users_cannot_publish():
     accounts.apply_account_action(actor, staff, "freeze", reason="x")
     with pytest.raises(PermissionDenied):
         publish_page(user, page)
+
+
+@pytest.mark.django_db
+def test_domain_policy_normalizes_url_hosts_and_subdomains():
+    staff = _user(staff=True)
+    domains.apply_domain_action("remote.test", staff, "suspend")
+    assert accounts.domain_host("https://Remote.Test:8443/actors/bob") == "remote.test"
+    assert accounts.allowed_domain("https://Remote.Test:8443/actors/bob") is False
+    assert accounts.allowed_domain("sub.remote.test") is False
+    assert accounts.allowed_domain("https://other.test/inbox") is True
+
+
+@pytest.mark.django_db
+def test_blocked_domain_refuses_fetch_for_uppercase_and_port():
+    cache.clear()
+    Instance.objects.create(domain="remote.test", blocked=True)
+    assert fetch_remote_actor("https://Remote.Test:8443/actors/bob") is None
+
+
+@override_settings(
+    INSTANCE_URL="https://panels.example.com", INSTANCE_DOMAIN="panels.example.com"
+)
+@pytest.mark.django_db
+def test_local_domain_cannot_be_moderated():
+    with pytest.raises(domains.InvalidDomainError):
+        domains.apply_domain_action("Panels.Example.com", _user(staff=True), "suspend")
+
+
+@pytest.mark.django_db
+def test_scheduled_publish_refuses_suspended_author():
+    staff = _user(staff=True)
+    user = _user()
+    personal = create_local_actor(f"u{uuid4().hex[:8]}", user=user)
+    comic = create_comic(user, f"comic{uuid4().hex[:6]}", "Comic")
+    series = create_series(user, comic, "Main")
+    page = create_page(user, series, title="Page")
+    Page.objects.filter(pk=page.pk).update(
+        status=PageStatus.SCHEDULED, scheduled_by=user
+    )
+    accounts.apply_account_action(personal, staff, "suspend", reason="x")
+    page.refresh_from_db()
+    with pytest.raises(ValidationError):
+        publishing.publish(page, published_by=user)
+    page.refresh_from_db()
+    assert page.status == PageStatus.SCHEDULED
+
+
+def _suspended_local():
+    staff = _user(staff=True)
+    user, actor = _local()
+    accounts.apply_account_action(actor, staff, "suspend", reason="x")
+    return actor
+
+
+@pytest.mark.django_db
+def test_suspended_local_actor_endpoints_are_hidden(client):
+    actor = _suspended_local()
+    handle = actor.handle
+    assert (
+        client.get(reverse("actor-detail", kwargs={"handle": handle})).status_code
+        == 404
+    )
+    assert (
+        client.get(
+            reverse("webfinger"), {"resource": f"acct:{handle}@testserver"}
+        ).status_code
+        == 404
+    )
+    assert (
+        client.post(reverse("actor-inbox", kwargs={"handle": handle})).status_code
+        == 404
+    )
+
+
+@pytest.mark.django_db
+def test_follow_to_suspended_target_is_ignored():
+    target = _suspended_local()
+    remote = _remote()
+    activity = SimpleNamespace(
+        actor=remote,
+        ap_id="https://remote.test/activities/follow",
+        payload={"type": "Follow", "object": target.ap_id},
+    )
+    handle_follow(activity)
+    assert not Follow.objects.filter(target=target).exists()
+
+
+@pytest.mark.django_db
+def test_federatable_page_hides_suspended_comic():
+    staff = _user(staff=True)
+    user = _user()
+    comic = create_comic(user, f"comic{uuid4().hex[:6]}", "Comic")
+    series = create_series(user, comic, "Main")
+    page = create_page(user, series, title="Page")
+    ap_id = f"https://testserver/pages/{page.id}"
+    Page.objects.filter(pk=page.pk).update(status=PageStatus.PUBLISHED, ap_id=ap_id)
+    accounts.apply_account_action(comic.actor, staff, "suspend", reason="x")
+    assert federatable_page(ap_id) is None
