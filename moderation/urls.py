@@ -82,4 +82,14 @@ urlpatterns = [
         views.domain_action,
         name="moderation-domain-action",
     ),
+    path(
+        "moderation/registration-blocks/email-domains",
+        views.registration_email_domains,
+        name="moderation-registration-email-domains",
+    ),
+    path(
+        "moderation/registration-blocks/ip-blocks",
+        views.registration_ips,
+        name="moderation-registration-ips",
+    ),
 ]

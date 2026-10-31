@@ -13,6 +13,7 @@ from comics.models import Page
 from moderation import accounts as account_services
 from moderation import blocks as block_services
 from moderation import domains as domain_services
+from moderation import registration as registration_services
 from moderation import reports as report_services
 from moderation import services
 from moderation.models import KeywordFilter
@@ -514,3 +515,49 @@ def domain_action(request, domain):
             "allowlisted": instance.allowlisted,
         }
     )
+
+
+@login_required
+@require_http_methods(["GET", "POST", "DELETE"])
+def registration_email_domains(request):
+    if not request.user.is_staff:
+        return _error("not_permitted", 403)
+    if request.method == "GET":
+        return JsonResponse(
+            {"domains": [row.domain for row in registration_services.email_domains()]}
+        )
+    try:
+        data = _payload(request)
+        if request.method == "POST":
+            row = registration_services.add_email_domain(
+                data.get("domain"), request.user
+            )
+            return JsonResponse({"domain": row.domain}, status=201)
+        registration_services.remove_email_domain(data.get("domain"), request.user)
+    except services.InvalidPayloadError:
+        return _error("invalid_payload", 400)
+    except registration_services.InvalidDomainError, report_services.NotPermittedError:
+        return _error("invalid_domain", 400)
+    return JsonResponse({"removed": True})
+
+
+@login_required
+@require_http_methods(["GET", "POST", "DELETE"])
+def registration_ips(request):
+    if not request.user.is_staff:
+        return _error("not_permitted", 403)
+    if request.method == "GET":
+        return JsonResponse(
+            {"addresses": [row.address for row in registration_services.ips()]}
+        )
+    try:
+        data = _payload(request)
+        if request.method == "POST":
+            row = registration_services.add_ip(data.get("address"), request.user)
+            return JsonResponse({"address": row.address}, status=201)
+        registration_services.remove_ip(data.get("address"), request.user)
+    except services.InvalidPayloadError:
+        return _error("invalid_payload", 400)
+    except registration_services.InvalidAddressError, report_services.NotPermittedError:
+        return _error("invalid_address", 400)
+    return JsonResponse({"removed": True})

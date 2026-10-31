@@ -249,3 +249,13 @@ class AccountModeration(UUIDModel):
         blank=True,
         related_name="account_moderation_changes",
     )
+
+
+class BlockedEmailDomain(UUIDModel):
+    domain = models.CharField(max_length=255, unique=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class BlockedIP(UUIDModel):
+    address = models.CharField(max_length=64, unique=True)
+    created_at = models.DateTimeField(auto_now_add=True)
