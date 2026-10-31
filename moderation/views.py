@@ -12,6 +12,7 @@ from actors.models import Actor
 from comics.models import Page
 from moderation import accounts as account_services
 from moderation import blocks as block_services
+from moderation import domains as domain_services
 from moderation import reports as report_services
 from moderation import services
 from moderation.models import KeywordFilter
@@ -469,3 +470,47 @@ def account_action(request, actor_id):
     except account_services.LocalOnlyError:
         return _error("local_only", 409)
     return JsonResponse(_serialize_account(actor))
+
+
+@login_required
+@require_http_methods(["GET"])
+def domain_detail(request, domain):
+    if not request.user.is_staff:
+        return _error("not_permitted", 403)
+    try:
+        policy = domain_services.domain_policy(domain)
+    except domain_services.InvalidDomainError:
+        return _error("invalid_domain", 400)
+    if policy is None:
+        raise Http404
+    return JsonResponse(policy)
+
+
+@login_required
+@require_http_methods(["POST"])
+def domain_action(request, domain):
+    if not request.user.is_staff:
+        return _error("not_permitted", 403)
+    try:
+        data = _payload(request)
+        instance = domain_services.apply_domain_action(
+            domain, request.user, data.get("action")
+        )
+    except services.InvalidPayloadError:
+        return _error("invalid_payload", 400)
+    except domain_services.InvalidDomainError:
+        return _error("invalid_domain", 400)
+    except domain_services.InvalidActionError:
+        return _error("invalid_action", 400)
+    except report_services.NotPermittedError:
+        return _error("not_permitted", 403)
+    return JsonResponse(
+        {
+            "domain": instance.domain,
+            "blocked": instance.blocked,
+            "silenced": instance.silenced,
+            "reject_media": instance.reject_media,
+            "reject_reports": instance.reject_reports,
+            "allowlisted": instance.allowlisted,
+        }
+    )

@@ -72,4 +72,14 @@ urlpatterns = [
         views.account_action,
         name="moderation-account-action",
     ),
+    path(
+        "moderation/domains/<str:domain>",
+        views.domain_detail,
+        name="moderation-domain-detail",
+    ),
+    path(
+        "moderation/domains/<str:domain>/action",
+        views.domain_action,
+        name="moderation-domain-action",
+    ),
 ]
