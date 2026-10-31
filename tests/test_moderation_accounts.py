@@ -3,12 +3,20 @@ from uuid import uuid4
 import pytest
 from django.contrib.auth import get_user_model
 from django.core import mail
+from django.core.exceptions import PermissionDenied, ValidationError
+from django.utils import timezone
 
-from actors.models import Actor, ActorType
+from actors.models import Actor, ActorType, Instance
 from actors.services import create_local_actor
+from comics.models import Page
+from comics.publishing import publish_page
 from comics.services import create_comic, create_page, create_series
+from federation.delivery import fan_out
+from federation.models import Activity, Delivery
 from moderation import accounts
 from moderation.models import AccountState, ModerationAudit
+from social.models import Follow, FollowStatus
+from social.services import follow, follower_inboxes
 
 
 def _user(staff=False):
@@ -131,3 +139,76 @@ def test_account_endpoints_are_staff_only(client):
         ).status_code
         == 409
     )
+
+
+@pytest.mark.django_db
+def test_suspended_accounts_are_dropped_inbound():
+    _, actor = _local()
+    staff = _user(staff=True)
+    accounts.apply_account_action(actor, staff, "suspend", reason="x")
+    assert accounts.should_drop_inbound(actor) is True
+
+
+@pytest.mark.django_db
+def test_allowlist_mode_drops_non_allowlisted_domains(settings):
+    settings.FEDERATION_ALLOWLIST_ENABLED = True
+    remote = _remote()
+    assert accounts.should_drop_inbound(remote) is True
+    Instance.objects.create(domain="remote.test", allowlisted=True)
+    assert accounts.should_drop_inbound(remote) is False
+
+
+@pytest.mark.django_db
+def test_blocked_domain_delivery_is_skipped():
+    _, actor = _local()
+    remote = _remote()
+    Instance.objects.create(domain="remote.test", blocked=True)
+    activity = Activity.objects.create(
+        ap_id="https://testserver/activities/1", type="Create", actor=actor, payload={}
+    )
+    assert fan_out(activity.payload, [remote.inbox], actor) == []
+    assert Delivery.objects.count() == 0
+
+
+@pytest.mark.django_db
+def test_suspended_followers_are_excluded_and_following_suspended_is_rejected():
+    _, actor = _local()
+    remote_follower = _remote(handle="fan")
+    Follow.objects.create(
+        follower=remote_follower, target=actor, status=FollowStatus.ACCEPTED
+    )
+    staff = _user(staff=True)
+    accounts.apply_account_action(remote_follower, staff, "suspend", reason="x")
+    assert follower_inboxes(actor) == []
+    target = _local()[1]
+    accounts.apply_account_action(target, staff, "suspend", reason="x")
+    with pytest.raises(ValidationError):
+        follow(actor, target)
+
+
+@pytest.mark.django_db
+def test_public_pages_hide_suspended_content(client):
+    user, actor = _local()
+    comic = create_comic(user, f"comic{uuid4().hex[:6]}", "Comic")
+    series = create_series(user, comic, "Main")
+    page = create_page(user, series, title="Page")
+    Page.objects.filter(pk=page.pk).update(
+        status="published",
+        ap_id=f"https://testserver/pages/{page.id}",
+        published_at=timezone.now(),
+    )
+    staff = _user(staff=True)
+    accounts.apply_account_action(comic.actor, staff, "suspend", reason="x")
+    assert client.get(f"/pages/{page.id}").status_code == 404
+
+
+@pytest.mark.django_db
+def test_frozen_users_cannot_publish():
+    user, actor = _local()
+    comic = create_comic(user, f"comic{uuid4().hex[:6]}", "Comic")
+    series = create_series(user, comic, "Main")
+    page = create_page(user, series, title="Page")
+    staff = _user(staff=True)
+    accounts.apply_account_action(actor, staff, "freeze", reason="x")
+    with pytest.raises(PermissionDenied):
+        publish_page(user, page)

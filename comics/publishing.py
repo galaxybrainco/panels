@@ -66,6 +66,13 @@ def publish(page, *, published_by=None, when=None, require_scheduled=False):
 def publish_page(user, page, *, when=None):
     if not permissions.can_publish(user, page.series.comic):
         raise PermissionDenied("You cannot publish this page.")
+    from moderation import accounts
+
+    if not accounts.can_post(user):
+        raise PermissionDenied("This account cannot publish.")
+    if accounts.is_force_sensitive(user):
+        page.sensitive = True
+        page.save(update_fields=["sensitive", "updated_at"])
     return publish(page, published_by=user, when=when)
 
 

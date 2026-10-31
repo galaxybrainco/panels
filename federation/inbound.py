@@ -128,6 +128,10 @@ def process_inbox(request):
     instance = Instance.objects.filter(domain=urlparse(actor.ap_id).netloc).first()
     if instance is not None and instance.blocked:
         return JsonResponse({"error": "blocked"}, status=403)
+    from moderation import accounts
+
+    if accounts.should_drop_inbound(actor):
+        return JsonResponse({"accepted": True}, status=202)
     if (
         instance is not None
         and instance.reject_reports

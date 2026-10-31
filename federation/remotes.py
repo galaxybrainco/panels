@@ -47,6 +47,11 @@ def fetch_remote_actor(ap_id):
     if cache.get(failed_key):
         return None
     domain = urlparse(ap_id).netloc
+    from moderation import accounts
+
+    if not accounts.allowed_domain(domain):
+        cache.set(failed_key, 1, timeout=FETCH_FAILED_TTL)
+        return None
     if not _fetch_allowed(domain):
         cache.set(failed_key, 1, timeout=FETCH_FAILED_TTL)
         return None

@@ -13,6 +13,10 @@ def comment_detail(request, comment_id):
     comment = get_object_or_404(Comment, pk=comment_id, status=CommentStatus.VISIBLE)
     if comment.ap_id != f"{settings.INSTANCE_URL}/comments/{comment.id}":
         raise Http404
+    from moderation import accounts
+
+    if not accounts.publicly_visible(comment.actor):
+        raise Http404
     page = comment.page
     if page.status != PageStatus.PUBLISHED or not federation_plan(page).emit:
         raise Http404
