@@ -22,7 +22,15 @@ def enqueue_delivery(activity, inbox_url, actor: Actor) -> Delivery:
     return delivery
 
 
+def _allowed(url):
+    from moderation import accounts
+
+    return accounts.allowed_domain(url)
+
+
 def fan_out(activity, inbox_urls, actor: Actor):
     return [
-        enqueue_delivery(activity, url, actor) for url in unique_inboxes(inbox_urls)
+        enqueue_delivery(activity, url, actor)
+        for url in unique_inboxes(inbox_urls)
+        if _allowed(url)
     ]

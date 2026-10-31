@@ -10,7 +10,10 @@ from django.views.decorators.http import require_http_methods
 
 from actors.models import Actor
 from comics.models import Page
+from moderation import accounts as account_services
 from moderation import blocks as block_services
+from moderation import domains as domain_services
+from moderation import registration as registration_services
 from moderation import reports as report_services
 from moderation import services
 from moderation.models import KeywordFilter
@@ -422,3 +425,139 @@ def audit_log(request):
             ]
         }
     )
+
+
+def _serialize_account(actor):
+    record = account_services.account_moderation(actor)
+    return {
+        "actor": str(actor.id),
+        "state": record.state,
+        "force_sensitive": record.force_sensitive,
+        "reason": record.reason,
+        "changed_by": record.changed_by.email if record.changed_by else None,
+    }
+
+
+@login_required
+@require_http_methods(["GET"])
+def account_detail(request, actor_id):
+    if not request.user.is_staff:
+        return _error("not_permitted", 403)
+    actor = get_object_or_404(Actor, pk=actor_id)
+    return JsonResponse(_serialize_account(actor))
+
+
+@login_required
+@require_http_methods(["POST"])
+def account_action(request, actor_id):
+    if not request.user.is_staff:
+        return _error("not_permitted", 403)
+    actor = get_object_or_404(Actor, pk=actor_id)
+    try:
+        data = _payload(request)
+        account_services.apply_account_action(
+            actor,
+            request.user,
+            data.get("action"),
+            reason=data.get("reason"),
+            enabled=data.get("enabled"),
+        )
+    except services.InvalidPayloadError:
+        return _error("invalid_payload", 400)
+    except account_services.InvalidActionError:
+        return _error("invalid_action", 400)
+    except report_services.NotPermittedError:
+        return _error("not_permitted", 403)
+    except account_services.LocalOnlyError:
+        return _error("local_only", 409)
+    return JsonResponse(_serialize_account(actor))
+
+
+@login_required
+@require_http_methods(["GET"])
+def domain_detail(request, domain):
+    if not request.user.is_staff:
+        return _error("not_permitted", 403)
+    try:
+        policy = domain_services.domain_policy(domain)
+    except domain_services.InvalidDomainError:
+        return _error("invalid_domain", 400)
+    if policy is None:
+        raise Http404
+    return JsonResponse(policy)
+
+
+@login_required
+@require_http_methods(["POST"])
+def domain_action(request, domain):
+    if not request.user.is_staff:
+        return _error("not_permitted", 403)
+    try:
+        data = _payload(request)
+        instance = domain_services.apply_domain_action(
+            domain, request.user, data.get("action")
+        )
+    except services.InvalidPayloadError:
+        return _error("invalid_payload", 400)
+    except domain_services.InvalidDomainError:
+        return _error("invalid_domain", 400)
+    except domain_services.InvalidActionError:
+        return _error("invalid_action", 400)
+    except report_services.NotPermittedError:
+        return _error("not_permitted", 403)
+    return JsonResponse(
+        {
+            "domain": instance.domain,
+            "blocked": instance.blocked,
+            "silenced": instance.silenced,
+            "reject_media": instance.reject_media,
+            "reject_reports": instance.reject_reports,
+            "allowlisted": instance.allowlisted,
+        }
+    )
+
+
+@login_required
+@require_http_methods(["GET", "POST", "DELETE"])
+def registration_email_domains(request):
+    if not request.user.is_staff:
+        return _error("not_permitted", 403)
+    if request.method == "GET":
+        return JsonResponse(
+            {"domains": [row.domain for row in registration_services.email_domains()]}
+        )
+    try:
+        data = _payload(request)
+        if request.method == "POST":
+            row = registration_services.add_email_domain(
+                data.get("domain"), request.user
+            )
+            return JsonResponse({"domain": row.domain}, status=201)
+        registration_services.remove_email_domain(data.get("domain"), request.user)
+    except services.InvalidPayloadError:
+        return _error("invalid_payload", 400)
+    except registration_services.InvalidDomainError, report_services.NotPermittedError:
+        return _error("invalid_domain", 400)
+    return JsonResponse({"removed": True})
+
+
+@login_required
+@require_http_methods(["GET", "POST", "DELETE"])
+def registration_ips(request):
+    if not request.user.is_staff:
+        return _error("not_permitted", 403)
+    if request.method == "GET":
+        return JsonResponse(
+            {"addresses": [row.address for row in registration_services.ips()]}
+        )
+    try:
+        data = _payload(request)
+        if request.method == "POST":
+            row = registration_services.add_ip(data.get("address"), request.user)
+            return JsonResponse({"address": row.address}, status=201)
+        registration_services.remove_ip(data.get("address"), request.user)
+    except services.InvalidPayloadError:
+        return _error("invalid_payload", 400)
+    except registration_services.InvalidAddressError, report_services.NotPermittedError:
+        return _error("invalid_address", 400)
+    return JsonResponse({"removed": True})

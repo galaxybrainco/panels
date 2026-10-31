@@ -1,4 +1,4 @@
-from django.http import JsonResponse
+from django.http import Http404, JsonResponse
 from django.shortcuts import get_object_or_404
 from django.views.decorators.csrf import csrf_exempt
 
@@ -14,12 +14,20 @@ def shared_inbox(request):
 
 @csrf_exempt
 def actor_inbox(request, handle):
-    get_object_or_404(Actor, handle=handle, domain="")
+    actor = get_object_or_404(Actor, handle=handle, domain="")
+    from moderation import accounts
+
+    if not accounts.publicly_visible(actor):
+        raise Http404
     return process_inbox(request)
 
 
 def actor_outbox(request, handle):
     actor = get_object_or_404(Actor, handle=handle, domain="")
+    from moderation import accounts
+
+    if not accounts.publicly_visible(actor):
+        raise Http404
     page_param = request.GET.get("page")
     page = int(page_param) if page_param and page_param.isdigit() else None
     return JsonResponse(collections.actor_outbox(actor, page=page))
@@ -27,6 +35,10 @@ def actor_outbox(request, handle):
 
 def actor_followers(request, handle):
     actor = get_object_or_404(Actor, handle=handle, domain="")
+    from moderation import accounts
+
+    if not accounts.publicly_visible(actor):
+        raise Http404
     page_param = request.GET.get("page")
     page = int(page_param) if page_param and page_param.isdigit() else None
     return JsonResponse(collections.actor_followers(actor, page=page))
@@ -34,6 +46,10 @@ def actor_followers(request, handle):
 
 def actor_following(request, handle):
     actor = get_object_or_404(Actor, handle=handle, domain="")
+    from moderation import accounts
+
+    if not accounts.publicly_visible(actor):
+        raise Http404
     page_param = request.GET.get("page")
     page = int(page_param) if page_param and page_param.isdigit() else None
     return JsonResponse(collections.actor_following(actor, page=page))
@@ -41,4 +57,8 @@ def actor_following(request, handle):
 
 def actor_featured(request, handle):
     actor = get_object_or_404(Actor, handle=handle, domain="")
+    from moderation import accounts
+
+    if not accounts.publicly_visible(actor):
+        raise Http404
     return JsonResponse(collections.empty_collection(actor.featured))

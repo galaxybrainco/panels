@@ -1,11 +1,10 @@
-from urllib.parse import urlparse
-
-from actors.models import Instance
 from federation.activitypub import is_public
 
 
 def _instance(domain):
-    return Instance.objects.filter(domain=domain).first()
+    from moderation import accounts
+
+    return accounts.domain_instance(domain)
 
 
 def domain_blocked(domain) -> bool:
@@ -19,7 +18,9 @@ def domain_silenced(domain) -> bool:
 
 
 def delivery_allowed(activity, inbox_url) -> bool:
-    domain = urlparse(inbox_url).netloc
+    from moderation import accounts
+
+    domain = accounts.domain_host(inbox_url)
     if domain_blocked(domain):
         return False
     if domain_silenced(domain) and is_public(activity):
