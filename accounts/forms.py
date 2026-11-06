@@ -18,6 +18,14 @@ class SignupForm(BaseSignupForm):
         ),
     )
 
+    def clean_email(self):
+        email = super().clean_email()
+        from moderation import registration
+
+        if registration.email_domain_blocked(email):
+            raise ValidationError("Signups from this email domain are not allowed.")
+        return email
+
     def clean_handle(self):
         handle = validate_handle(self.cleaned_data["handle"])
         if Actor.objects.filter(handle=handle, domain="").exists():

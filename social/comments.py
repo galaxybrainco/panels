@@ -60,6 +60,10 @@ def federatable_page(object_id):
     page = Page.objects.filter(ap_id=object_id, status=PageStatus.PUBLISHED).first()
     if page is None or not federation_plan(page).emit:
         return None
+    from moderation import accounts
+
+    if not accounts.page_actor_visible(page):
+        return None
     return page
 
 

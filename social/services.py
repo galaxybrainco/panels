@@ -5,6 +5,7 @@ from django.db import transaction
 
 from federation.activitypub import build_activity
 from federation.delivery import fan_out
+from moderation import accounts
 from social.models import Follow, FollowStatus
 
 
@@ -15,6 +16,7 @@ def follower_inboxes(actor):
             status=FollowStatus.ACCEPTED,
             follower__domain__gt="",
         )
+        .exclude(follower__moderation__state__in=["suspended", "disabled"])
         .select_related("follower")
         .order_by("created_at")
     )
@@ -43,6 +45,8 @@ def _target_inbox(target):
 def follow(local_actor, target):
     if local_actor == target:
         raise ValidationError("You cannot follow yourself.")
+    if accounts.is_suspended(target) or accounts.is_disabled(target):
+        raise ValidationError("You cannot follow this account.")
     status = FollowStatus.ACCEPTED if target.is_local else FollowStatus.PENDING
     activity_id = "" if target.is_local else f"{local_actor.ap_id}#follows/{uuid4()}"
     follow_obj, created = Follow.objects.get_or_create(

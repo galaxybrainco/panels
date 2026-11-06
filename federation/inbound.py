@@ -1,12 +1,10 @@
 import json
 from dataclasses import dataclass
-from urllib.parse import urlparse
 
 import requests
 from django.core.cache import cache
 from django.http import JsonResponse
 
-from actors.models import Instance
 from federation import handlers, http_signatures, remotes, rfc9421
 from federation.models import Activity, ActivityStatus
 from moderation import blocks
@@ -125,9 +123,15 @@ def process_inbox(request):
     if blocks.should_drop_inbound(actor, document.get("type")):
         return JsonResponse({"accepted": True}, status=202)
 
-    instance = Instance.objects.filter(domain=urlparse(actor.ap_id).netloc).first()
+    from moderation import accounts
+
+    instance = accounts.domain_instance(actor.ap_id)
     if instance is not None and instance.blocked:
         return JsonResponse({"error": "blocked"}, status=403)
+    from moderation import accounts
+
+    if accounts.should_drop_inbound(actor):
+        return JsonResponse({"accepted": True}, status=202)
     if (
         instance is not None
         and instance.reject_reports

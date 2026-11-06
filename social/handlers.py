@@ -38,6 +38,10 @@ def handle_follow(activity):
     ).first()
     if target is None:
         return
+    from moderation import accounts
+
+    if not accounts.publicly_visible(target):
+        return
     follow_obj, created = Follow.objects.get_or_create(
         follower=activity.actor,
         target=target,

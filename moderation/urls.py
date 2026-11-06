@@ -62,4 +62,34 @@ urlpatterns = [
         name="moderation-actor-notes",
     ),
     path("moderation/audit", views.audit_log, name="moderation-audit"),
+    path(
+        "moderation/accounts/<uuid:actor_id>",
+        views.account_detail,
+        name="moderation-account-detail",
+    ),
+    path(
+        "moderation/accounts/<uuid:actor_id>/action",
+        views.account_action,
+        name="moderation-account-action",
+    ),
+    path(
+        "moderation/domains/<str:domain>",
+        views.domain_detail,
+        name="moderation-domain-detail",
+    ),
+    path(
+        "moderation/domains/<str:domain>/action",
+        views.domain_action,
+        name="moderation-domain-action",
+    ),
+    path(
+        "moderation/registration-blocks/email-domains",
+        views.registration_email_domains,
+        name="moderation-registration-email-domains",
+    ),
+    path(
+        "moderation/registration-blocks/ip-blocks",
+        views.registration_ips,
+        name="moderation-registration-ips",
+    ),
 ]

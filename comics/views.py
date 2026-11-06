@@ -8,6 +8,10 @@ from comics.models import Page, PageStatus
 
 def page_detail(request, page_id):
     page = get_object_or_404(Page, pk=page_id, status=PageStatus.PUBLISHED)
+    from moderation import accounts
+
+    if not accounts.publicly_visible(page.series.comic.actor):
+        raise Http404
     plan = federation_plan(page)
     if not plan.emit:
         raise Http404

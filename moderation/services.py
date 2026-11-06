@@ -160,7 +160,7 @@ def is_filtered(user, *, actor=None, page=None, comment=None):
     return matching_filter(user, actor=actor, page=page, comment=comment) is not None
 
 
-def _host(domain):
+def normalize_domain(domain):
     raw = (domain or "").strip().lower().rstrip(".")
     if not raw:
         return ""
@@ -177,6 +177,9 @@ def _host(domain):
     if not host or len(host) > 255 or not DOMAIN_RE.match(host):
         return ""
     return host
+
+
+_host = normalize_domain
 
 
 def block_domain(user, domain):
