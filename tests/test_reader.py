@@ -186,7 +186,107 @@ def test_suspended_comic_surface_is_hidden(client):
     assert client.get(_reader(p1)).status_code == 404
 
 
+@pytest.mark.django_db
+def test_gated_next_image_is_not_prefetched(client):
+    owner, comic, _, _, p1, p2, _ = _scene()
+    _publish(p1, p2)
+    Page.objects.filter(pk=p2.pk).update(audience=Audience.MEMBERS)
+    add_media(owner, p1, upload(), alt_text="Panel one")
+    gated_media = add_media(owner, p2, upload(), alt_text="Panel two")
+    response = client.get(_reader(p1))
+    assert b'data-next-image=""' in response.content
+    assert gated_media.original.url.encode() not in response.content
+
+
+@pytest.mark.django_db
+def test_home_and_archive_do_not_expose_gated_media(client):
+    owner, comic, first, _, p1, p2, _ = _scene()
+    _publish(p1, p2)
+    Page.objects.filter(pk=p2.pk).update(audience=Audience.MEMBERS)
+    add_media(owner, p1, upload(), alt_text="Public")
+    gated_media = add_media(owner, p2, upload(), alt_text="Gated")
+    name = gated_media.original.url.encode()
+    home = client.get(reverse("comic-home", args=[comic.slug]))
+    archive = client.get(reverse("series-archive", args=[comic.slug, first.slug]))
+    assert name not in home.content
+    assert name not in archive.content
+    assert b"One-B" not in archive.content
+
+
+@pytest.mark.django_db
+def test_htmx_gated_navigation_redirects_instead_of_blanking(client):
+    _, _, _, _, p1, _, _ = _scene(audience=Audience.MEMBERS)
+    _publish(p1)
+    anonymous = client.get(_reader(p1), HTTP_HX_REQUEST="true")
+    assert anonymous.status_code == 200
+    assert "HX-Redirect" in anonymous
+    assert (
+        "account_login" in anonymous["HX-Redirect"]
+        or "login" in anonymous["HX-Redirect"]
+    )
+
+    client.force_login(_user())
+    outsider = client.get(_reader(p1), HTTP_HX_REQUEST="true")
+    assert outsider.status_code == 200
+    assert outsider["HX-Redirect"] == _reader(p1)
+
+
+@pytest.mark.django_db
+def test_archive_month_matches_and_paginates(client):
+    _, comic, first, _, p1, p2, _ = _scene()
+    _publish(p1, p2)
+    Page.objects.filter(pk=p1.pk).update(
+        published_at=timezone.datetime(2020, 1, 15, tzinfo=timezone.UTC)
+    )
+    Page.objects.filter(pk=p2.pk).update(
+        published_at=timezone.datetime(2020, 2, 15, tzinfo=timezone.UTC)
+    )
+    url = reverse("series-archive", args=[comic.slug, first.slug])
+    january = client.get(url + "?month=2020-01")
+    assert b"One-A" in january.content
+    assert b"One-B" not in january.content
+
+
+@pytest.mark.django_db
+def test_archive_pagination_labels(client):
+    owner, comic, first, _, _, _, _ = _scene()
+    pages = [create_page(owner, first, title=f"Page {index}") for index in range(51)]
+    _publish(*pages)
+    url = reverse("series-archive", args=[comic.slug, first.slug])
+    second = client.get(url + "?page=2")
+    assert b"Page 2 of 2" in second.content
+    assert b"Older" in second.content
+
+
+@pytest.mark.django_db
+def test_unknown_routes_and_scheduled_pages_404(client):
+    owner, comic, first, _, p1, _, _ = _scene()
+    _publish(p1)
+    assert client.get(reverse("comic-home", args=["missing"])).status_code == 404
+    assert (
+        client.get(reverse("series-archive", args=[comic.slug, "missing"])).status_code
+        == 404
+    )
+    assert (
+        client.get(
+            reverse("reader-page", args=[comic.slug, first.slug, 999])
+        ).status_code
+        == 404
+    )
+    assert client.get(reverse("comic-latest", args=["missing"])).status_code == 404
+
+
+@pytest.mark.django_db
+def test_empty_comic_latest_is_404(client):
+    _, comic, _, _, _, _, _ = _scene()
+    assert client.get(reverse("comic-latest", args=[comic.slug])).status_code == 404
+
+
 def test_htmx_asset_is_vendored():
-    asset = Path("static/vendor/htmx.min.js")
+    base = Path(__file__).resolve().parent.parent
+    asset = base / "static/vendor/htmx.min.js"
+    license_file = base / "static/vendor/htmx.LICENSE"
     assert asset.exists()
     assert asset.stat().st_size > 1000
+    assert license_file.exists()
+    assert "2.0.4" in license_file.read_text()

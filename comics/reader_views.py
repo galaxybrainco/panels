@@ -2,9 +2,10 @@ from datetime import datetime
 from urllib.parse import quote
 
 from django.core.paginator import Paginator
-from django.http import Http404, HttpResponseBadRequest
+from django.http import Http404, HttpResponse, HttpResponseBadRequest
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.views.decorators.vary import vary_on_headers
 
 from actors.models import Actor
 from comics import reading
@@ -22,11 +23,24 @@ def _comic_or_404(slug):
     return comic
 
 
-def _page_thumb(page):
-    media = list(page.media.all())
-    if not media:
+def _viewer_actor(request):
+    if not request.user.is_authenticated:
         return None
-    return derivative_url(media[0], DerivativeKind.THUMBNAIL)
+    return Actor.objects.filter(user=request.user).first()
+
+
+def _can_read(page, actor):
+    required = page_requires_tier(page)
+    if required is None:
+        return True
+    return actor is not None and can_view_page(actor, page)
+
+
+def _page_thumb(page):
+    media = next(iter(page.media.all()), None)
+    if media is None:
+        return None
+    return derivative_url(media, DerivativeKind.THUMBNAIL)
 
 
 def _series_url(comic, series):
@@ -38,45 +52,59 @@ def _reader_url(page):
     return reverse("reader-page", args=[comic.slug, page.series.slug, page.position])
 
 
+@vary_on_headers("HX-Request")
 def comic_home(request, slug):
     comic = _comic_or_404(slug)
+    actor = _viewer_actor(request)
     cards = []
     for series in comic.series.order_by("position", "id"):
-        pages = series.pages.filter(status=PageStatus.PUBLISHED)
-        first = pages.prefetch_related("media").first()
+        pages = list(
+            series.pages.filter(status=PageStatus.PUBLISHED).prefetch_related("media")
+        )
+        accessible = [page for page in pages if _can_read(page, actor)]
+        first = next((page for page in accessible if page.media.all()), None)
         cards.append(
             {
                 "series": series,
                 "url": _series_url(comic, series),
-                "count": pages.count(),
+                "count": len(accessible),
                 "thumb": _page_thumb(first) if first is not None else None,
             }
         )
     latest = reading.latest_page(comic)
+    latest_url = None
+    if latest is not None and _can_read(latest, actor):
+        latest_url = _reader_url(latest)
     return render(
         request,
         "comics/comic_home.html",
-        {
-            "comic": comic,
-            "cards": cards,
-            "latest_url": _reader_url(latest) if latest is not None else None,
-        },
+        {"comic": comic, "cards": cards, "latest_url": latest_url},
     )
 
 
+@vary_on_headers("HX-Request")
 def series_archive(request, slug, series_slug):
     comic = _comic_or_404(slug)
     series = get_object_or_404(Series, comic=comic, slug=series_slug)
-    pages = reading.series_pages(series).prefetch_related("media")
-    month = request.GET.get("month")
-    if month:
+    actor = _viewer_actor(request)
+    pages = list(
+        reading.series_pages(series)
+        .select_related("series__comic")
+        .prefetch_related("media")
+    )
+    if request.GET.get("month"):
         try:
-            parsed = datetime.strptime(month, "%Y-%m")
+            parsed = datetime.strptime(request.GET["month"], "%Y-%m")
         except ValueError:
             return HttpResponseBadRequest("Invalid month")
-        pages = pages.filter(
-            published_at__year=parsed.year, published_at__month=parsed.month
-        )
+        pages = [
+            page
+            for page in pages
+            if page.published_at is not None
+            and page.published_at.year == parsed.year
+            and page.published_at.month == parsed.month
+        ]
+    pages = [page for page in pages if _can_read(page, actor)]
     page_obj = Paginator(pages, 50).get_page(request.GET.get("page"))
     items = [
         {"page": page, "thumb": _page_thumb(page), "url": _reader_url(page)}
@@ -90,7 +118,7 @@ def series_archive(request, slug, series_slug):
             "series": series,
             "items": items,
             "page_obj": page_obj,
-            "month": month or "",
+            "month": request.GET.get("month", ""),
         },
     )
 
@@ -98,44 +126,61 @@ def series_archive(request, slug, series_slug):
 def latest(request, slug):
     comic = _comic_or_404(slug)
     page = reading.latest_page(comic)
-    if page is None:
+    if page is None or not _can_read(page, _viewer_actor(request)):
         raise Http404
     return redirect(_reader_url(page))
 
 
-def _access_response(request, page, comic, series):
+def _login_redirect(request):
+    url = f"{reverse('account_login')}?next={quote(request.get_full_path(), safe='/')}"
+    if request.headers.get("HX-Request") == "true":
+        response = HttpResponse(status=200)
+        response["HX-Redirect"] = url
+        return response
+    return redirect(url)
+
+
+def _gated(request, page, comic, series):
+    if request.headers.get("HX-Request") == "true":
+        response = HttpResponse(status=200)
+        response["HX-Redirect"] = request.get_full_path()
+        return response
+    return render(
+        request,
+        "comics/gated.html",
+        {
+            "comic": comic,
+            "series": series,
+            "comic_url": reverse("comic-home", args=[comic.slug]),
+        },
+        status=403,
+    )
+
+
+def _access_response(request, page, comic, series, actor):
     required = page_requires_tier(page)
     if required is None:
         return None
     if not request.user.is_authenticated:
-        login = reverse("account_login")
-        return redirect(f"{login}?next={quote(request.get_full_path(), safe='/')}")
-    actor = Actor.objects.filter(user=request.user).first()
-    if actor is None or not can_view_page(actor, page):
-        return render(
-            request,
-            "comics/gated.html",
-            {
-                "comic": comic,
-                "series": series,
-                "comic_url": reverse("comic-home", args=[comic.slug]),
-            },
-            status=403,
-        )
+        return _login_redirect(request)
+    if not _can_read(page, actor):
+        return _gated(request, page, comic, series)
     return None
 
 
+@vary_on_headers("HX-Request")
 def reader(request, slug, series_slug, position):
     comic = _comic_or_404(slug)
     page = get_object_or_404(
-        Page.objects.select_related("series").prefetch_related("media"),
+        Page.objects.select_related("series__comic").prefetch_related("media"),
         series__comic=comic,
         series__slug=series_slug,
         position=position,
         status=PageStatus.PUBLISHED,
     )
     series = page.series
-    guarded = _access_response(request, page, comic, series)
+    actor = _viewer_actor(request)
+    guarded = _access_response(request, page, comic, series, actor)
     if guarded is not None:
         return guarded
     nav_pages = reading.neighbors(page)
@@ -145,10 +190,10 @@ def reader(request, slug, series_slug, position):
     }
     next_page = nav_pages["next"]
     next_image = ""
-    if next_page is not None:
-        next_media = list(next_page.media.all())
-        if next_media:
-            next_image = derivative_url(next_media[0], DerivativeKind.DISPLAY)
+    if next_page is not None and _can_read(next_page, actor):
+        next_media = next(iter(next_page.media.all()), None)
+        if next_media is not None:
+            next_image = derivative_url(next_media, DerivativeKind.DISPLAY)
     context = {
         "comic": comic,
         "series": series,
