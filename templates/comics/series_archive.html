@@ -4,6 +4,7 @@
   <article class="archive">
     <p><a href="{% url 'comic-home' comic.slug %}">{{ comic.title }}</a></p>
     <h1>{{ series.title }}</h1>
+    {% if resume_url %}<p class="resume"><a href="{{ resume_url }}">Continue reading: {{ resume_label }}</a></p>{% endif %}
     <form method="get" class="month-jump">
       <label for="month">Jump to month</label>
       <input id="month" type="month" name="month" value="{{ month }}">
@@ -12,7 +13,7 @@
     <ul class="archive-list">
       {% for item in items %}
         <li>
-          <a href="{{ item.url }}">
+          <a href="{{ item.url }}"{% if item.current %} aria-current="page" class="current"{% endif %}>
             {% if item.thumb %}<img src="{{ item.thumb }}" alt="" loading="lazy">{% endif %}
             <span>{{ item.page.title|default:"Page" }}</span>
             <small>#{{ item.page.position }}{% if item.page.published_at %} · {{ item.page.published_at|date:"Y-m-d" }}{% endif %}</small>

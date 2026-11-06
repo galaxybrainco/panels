@@ -12,6 +12,7 @@
             {% if card.thumb %}<img src="{{ card.thumb }}" alt="" loading="lazy">{% endif %}
             <span>{{ card.series.title }}</span>
             <small>{{ card.count }} page{{ card.count|pluralize }}</small>
+            {% if card.resume_url %}<small class="resume"><a href="{{ card.resume_url }}">Continue: {{ card.resume_label }}</a></small>{% endif %}
           </a>
         </li>
       {% empty %}
