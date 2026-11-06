@@ -1,0 +1,22 @@
+{% extends "comics/base.html" %}
+{% block title %}{{ comic.title }}{% endblock %}
+{% block content %}
+  <article class="comic-home">
+    <h1>{{ comic.title }}</h1>
+    {% if comic.description %}<p>{{ comic.description }}</p>{% endif %}
+    {% if latest_url %}<p><a class="button" href="{{ latest_url }}">Read latest</a></p>{% endif %}
+    <ul class="series-list">
+      {% for card in cards %}
+        <li>
+          <a href="{{ card.url }}">
+            {% if card.thumb %}<img src="{{ card.thumb }}" alt="" loading="lazy">{% endif %}
+            <span>{{ card.series.title }}</span>
+            <small>{{ card.count }} page{{ card.count|pluralize }}</small>
+          </a>
+        </li>
+      {% empty %}
+        <li>No published series yet.</li>
+      {% endfor %}
+    </ul>
+  </article>
+{% endblock %}

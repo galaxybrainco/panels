@@ -1,0 +1,35 @@
+{% extends "comics/base.html" %}
+{% block title %}{{ comic.title }} — {{ series.title }}{% endblock %}
+{% block content %}
+  <article class="archive">
+    <p><a href="{% url 'comic-home' comic.slug %}">{{ comic.title }}</a></p>
+    <h1>{{ series.title }}</h1>
+    <form method="get" class="month-jump">
+      <label for="month">Jump to month</label>
+      <input id="month" type="month" name="month" value="{{ month }}">
+      <button type="submit">Go</button>
+    </form>
+    <ul class="archive-list">
+      {% for item in items %}
+        <li>
+          <a href="{{ item.url }}">
+            {% if item.thumb %}<img src="{{ item.thumb }}" alt="" loading="lazy">{% endif %}
+            <span>{{ item.page.title|default:"Page" }}</span>
+            <small>#{{ item.page.position }}{% if item.page.published_at %} · {{ item.page.published_at|date:"Y-m-d" }}{% endif %}</small>
+          </a>
+        </li>
+      {% empty %}
+        <li>No published pages.</li>
+      {% endfor %}
+    </ul>
+    <nav class="pagination">
+      {% if page_obj.has_previous %}
+        <a href="?month={{ month }}&page={{ page_obj.previous_page_number }}">Newer</a>
+      {% endif %}
+      <span>Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+      {% if page_obj.has_next %}
+        <a href="?month={{ month }}&page={{ page_obj.next_page_number }}">Older</a>
+      {% endif %}
+    </nav>
+  </article>
+{% endblock %}

@@ -1,0 +1,13 @@
+:root { color-scheme: light dark; }
+body { font-family: system-ui, sans-serif; margin: 0; line-height: 1.5; }
+.site-header, main { max-width: 72rem; margin: 0 auto; padding: 0 1rem; }
+.site-header nav { display: flex; gap: 1rem; padding: .75rem 0; }
+.reader-images img { display: block; width: 100%; height: auto; margin: 0 auto 1rem; }
+.reader-header h1 { margin: .5rem 0; }
+.reader-nav { display: flex; gap: 1rem; flex-wrap: wrap; padding: 1rem 0 3rem; }
+.series-list, .archive-list { list-style: none; padding: 0; display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(12rem, 1fr)); }
+.series-list a, .archive-list a { display: flex; flex-direction: column; gap: .25rem; text-decoration: none; }
+.series-list img, .archive-list img { width: 100%; height: auto; aspect-ratio: 2 / 3; object-fit: cover; }
+.transcript, .commentary { margin: 1.5rem 0; }
+.pagination { display: flex; gap: 1rem; padding: 1rem 0 3rem; }
+.gated { padding: 2rem 0; }

@@ -1,0 +1,9 @@
+{% extends "comics/base.html" %}
+{% block title %}Members only — {{ comic.title }}{% endblock %}
+{% block content %}
+  <article class="gated">
+    <h1>Members only</h1>
+    <p>This page is available to supporters of {{ comic.title }}.</p>
+    <p><a href="{{ comic_url }}">Back to {{ comic.title }}</a></p>
+  </article>
+{% endblock %}

@@ -1,0 +1,7 @@
+{% extends "comics/base.html" %}
+{% block title %}{{ page.title|default:"Page" }} — {{ comic.title }}{% endblock %}
+{% block content %}
+  <div id="reader-shell">
+    {% include "comics/_reader.html" %}
+  </div>
+{% endblock %}

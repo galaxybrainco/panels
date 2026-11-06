@@ -1,0 +1,29 @@
+<section id="reader" class="reader" data-next-image="{{ next_image }}">
+  <header class="reader-header">
+    <p><a href="{% url 'comic-home' comic.slug %}">{{ comic.title }}</a> · <a href="{% url 'series-archive' comic.slug series.slug %}">{{ series.title }}</a></p>
+    <h1>{{ page.title|default:"Page" }}</h1>
+  </header>
+  <div class="reader-images">
+    {% for image in images %}
+      <img src="{{ image.url }}" alt="{{ image.alt }}"{% if image.width %} width="{{ image.width }}"{% endif %}{% if image.height %} height="{{ image.height }}"{% endif %}>
+    {% endfor %}
+  </div>
+  {% if page.transcript %}
+    <details class="transcript">
+      <summary>Transcript</summary>
+      <p>{{ page.transcript|linebreaksbr }}</p>
+    </details>
+  {% endif %}
+  {% if page.author_commentary %}
+    <section class="commentary">
+      <h2>Author commentary</h2>
+      <p>{{ page.author_commentary|linebreaksbr }}</p>
+    </section>
+  {% endif %}
+  <nav class="reader-nav" aria-label="Page navigation">
+    {% if nav.first %}<a data-nav="first" href="{{ nav.first }}" hx-get="{{ nav.first }}" hx-target="#reader" hx-select="#reader" hx-swap="outerHTML" hx-push-url="true">First</a>{% endif %}
+    {% if nav.previous %}<a data-nav="prev" href="{{ nav.previous }}" hx-get="{{ nav.previous }}" hx-target="#reader" hx-select="#reader" hx-swap="outerHTML" hx-push-url="true">← Previous</a>{% endif %}
+    {% if nav.next %}<a data-nav="next" href="{{ nav.next }}" hx-get="{{ nav.next }}" hx-target="#reader" hx-select="#reader" hx-swap="outerHTML" hx-push-url="true">Next →</a>{% endif %}
+    {% if nav.latest %}<a data-nav="latest" href="{{ nav.latest }}" hx-get="{{ nav.latest }}" hx-target="#reader" hx-select="#reader" hx-swap="outerHTML" hx-push-url="true">Latest</a>{% endif %}
+  </nav>
+</section>
