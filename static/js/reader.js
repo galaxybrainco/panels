@@ -1,17 +1,10 @@
+// HTMX handles navigation (including arrow keys via hx-trigger). This shim
+// only covers touch swipes and next-image prefetch, which HTMX does not.
 (function () {
   function go(direction) {
     const link = document.querySelector('#reader [data-nav="' + direction + '"]');
     if (link) link.click();
   }
-  function typing(event) {
-    const tag = (event.target.tagName || '').toLowerCase();
-    return ['input', 'textarea', 'select'].includes(tag) || event.target.isContentEditable;
-  }
-  document.addEventListener('keydown', function (event) {
-    if (typing(event)) return;
-    if (event.key === 'ArrowLeft') { event.preventDefault(); go('prev'); }
-    if (event.key === 'ArrowRight') { event.preventDefault(); go('next'); }
-  });
   let start = null;
   document.addEventListener('touchstart', function (event) {
     start = { x: event.touches[0].clientX, y: event.touches[0].clientY };

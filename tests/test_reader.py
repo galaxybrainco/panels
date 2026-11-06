@@ -290,3 +290,14 @@ def test_htmx_asset_is_vendored():
     assert asset.stat().st_size > 1000
     assert license_file.exists()
     assert "2.0.4" in license_file.read_text()
+
+
+@pytest.mark.django_db
+def test_navigation_uses_htmx_keyboard_triggers(client):
+    _, _, _, _, p1, p2, p3 = _scene()
+    _publish(p1, p2, p3)
+    response = client.get(_reader(p2))
+    content = response.content.decode()
+    assert "ArrowLeft" in content
+    assert "ArrowRight" in content
+    assert content.count("hx-trigger") >= 2

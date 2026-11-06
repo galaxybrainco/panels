@@ -22,8 +22,8 @@
   {% endif %}
   <nav class="reader-nav" aria-label="Page navigation">
     {% if nav.first %}<a data-nav="first" href="{{ nav.first }}" hx-get="{{ nav.first }}" hx-target="#reader" hx-select="#reader" hx-swap="outerHTML" hx-push-url="true">First</a>{% endif %}
-    {% if nav.previous %}<a data-nav="prev" href="{{ nav.previous }}" hx-get="{{ nav.previous }}" hx-target="#reader" hx-select="#reader" hx-swap="outerHTML" hx-push-url="true">← Previous</a>{% endif %}
-    {% if nav.next %}<a data-nav="next" href="{{ nav.next }}" hx-get="{{ nav.next }}" hx-target="#reader" hx-select="#reader" hx-swap="outerHTML" hx-push-url="true">Next →</a>{% endif %}
+    {% if nav.previous %}<a data-nav="prev" href="{{ nav.previous }}" hx-get="{{ nav.previous }}" hx-target="#reader" hx-select="#reader" hx-swap="outerHTML" hx-push-url="true" hx-trigger="click, keydown[key=='ArrowLeft'] from:body">← Previous</a>{% endif %}
+    {% if nav.next %}<a data-nav="next" href="{{ nav.next }}" hx-get="{{ nav.next }}" hx-target="#reader" hx-select="#reader" hx-swap="outerHTML" hx-push-url="true" hx-trigger="click, keydown[key=='ArrowRight'] from:body">Next →</a>{% endif %}
     {% if nav.latest %}<a data-nav="latest" href="{{ nav.latest }}" hx-get="{{ nav.latest }}" hx-target="#reader" hx-select="#reader" hx-swap="outerHTML" hx-push-url="true">Latest</a>{% endif %}
   </nav>
 </section>
