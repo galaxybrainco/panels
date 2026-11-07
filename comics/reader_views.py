@@ -12,6 +12,8 @@ from comics import reading
 from comics.models import Comic, Page, PageStatus, Series
 from media.derivative_urls import DerivativeKind, derivative_url
 from memberships.services import can_view_page, page_requires_tier
+from social.models import ReadingProgress
+from social.progress import record_progress, resume_point
 
 
 def _comic_or_404(slug):
@@ -43,6 +45,28 @@ def _page_thumb(page):
     return derivative_url(media, DerivativeKind.THUMBNAIL)
 
 
+def _resume_pages(user, comic):
+    if not user.is_authenticated:
+        return {}
+    rows = ReadingProgress.objects.filter(
+        user=user, series__comic=comic
+    ).select_related("page", "page__series")
+    return {row.series_id: row.page for row in rows if row.page is not None}
+
+
+def _resume_card(page, actor):
+    if (
+        page is None
+        or page.status != PageStatus.PUBLISHED
+        or not _can_read(page, actor)
+    ):
+        return None
+    return {
+        "url": _reader_url(page),
+        "label": page.title or f"Page {page.position}",
+    }
+
+
 def _series_url(comic, series):
     return reverse("series-archive", args=[comic.slug, series.slug])
 
@@ -56,6 +80,7 @@ def _reader_url(page):
 def comic_home(request, slug):
     comic = _comic_or_404(slug)
     actor = _viewer_actor(request)
+    resume_pages = _resume_pages(request.user, comic)
     cards = []
     for series in comic.series.order_by("position", "id"):
         pages = list(
@@ -63,12 +88,15 @@ def comic_home(request, slug):
         )
         accessible = [page for page in pages if _can_read(page, actor)]
         first = next((page for page in accessible if page.media.all()), None)
+        resume = _resume_card(resume_pages.get(series.id), actor)
         cards.append(
             {
                 "series": series,
                 "url": _series_url(comic, series),
                 "count": len(accessible),
                 "thumb": _page_thumb(first) if first is not None else None,
+                "resume_url": resume["url"] if resume else None,
+                "resume_label": resume["label"] if resume else None,
             }
         )
     latest = reading.latest_page(comic)
@@ -105,9 +133,20 @@ def series_archive(request, slug, series_slug):
             and page.published_at.month == parsed.month
         ]
     pages = [page for page in pages if _can_read(page, actor)]
+    current_page = None
+    if request.user.is_authenticated:
+        row = resume_point(request.user, series)
+        if row is not None:
+            current_page = row.page
+    resume = _resume_card(current_page, actor)
     page_obj = Paginator(pages, 50).get_page(request.GET.get("page"))
     items = [
-        {"page": page, "thumb": _page_thumb(page), "url": _reader_url(page)}
+        {
+            "page": page,
+            "thumb": _page_thumb(page),
+            "url": _reader_url(page),
+            "current": current_page is not None and current_page.pk == page.pk,
+        }
         for page in page_obj.object_list
     ]
     return render(
@@ -119,6 +158,8 @@ def series_archive(request, slug, series_slug):
             "items": items,
             "page_obj": page_obj,
             "month": request.GET.get("month", ""),
+            "resume_url": resume["url"] if resume else None,
+            "resume_label": resume["label"] if resume else None,
         },
     )
 
@@ -183,6 +224,8 @@ def reader(request, slug, series_slug, position):
     guarded = _access_response(request, page, comic, series, actor)
     if guarded is not None:
         return guarded
+    if request.user.is_authenticated:
+        record_progress(request.user, page)
     nav_pages = reading.neighbors(page)
     nav = {
         key: (_reader_url(value) if value is not None else None)
