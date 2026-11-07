@@ -1,0 +1,29 @@
+{% extends "comics/base.html" %}
+{% block title %}Notifications{% endblock %}
+{% block content %}
+  <section class="notifications">
+    <h1>Notifications{% if unread %} ({{ unread }} unread){% endif %}</h1>
+    <form method="post" action="{% url 'notifications-read-all' %}">
+      {% csrf_token %}
+      <button type="submit">Mark all read</button>
+    </form>
+    <ul>
+      {% for notification in page_obj %}
+        <li class="{% if not notification.read %}unread{% endif %}">
+          <a href="{% url 'notification-open' notification.id %}">
+            {{ notification.get_type_display }}{% if notification.actor %} · {{ notification.actor.name|default:notification.actor.handle }}{% endif %}
+          </a>
+          {% if notification.page %}<span>{{ notification.page.title|default:"Page" }}</span>{% endif %}
+          <time>{{ notification.created_at|date:"Y-m-d H:i" }}</time>
+        </li>
+      {% empty %}
+        <li>No notifications.</li>
+      {% endfor %}
+    </ul>
+    <nav class="pagination">
+      {% if page_obj.has_previous %}<a href="?page={{ page_obj.previous_page_number }}">Newer</a>{% endif %}
+      <span>Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+      {% if page_obj.has_next %}<a href="?page={{ page_obj.next_page_number }}">Older</a>{% endif %}
+    </nav>
+  </section>
+{% endblock %}

@@ -1,0 +1,41 @@
+{% extends "comics/base.html" %}
+{% block title %}Your feed{% endblock %}
+{% block content %}
+  <section class="feed">
+    <h1>Your feed</h1>
+    {% if notifications %}
+      <section class="feed-notifications">
+        <h2>Recent notifications</h2>
+        <ul>
+          {% for notification in notifications %}
+            <li>
+              <a href="{% url 'notification-open' notification.id %}">{{ notification.get_type_display }}{% if notification.actor %} · {{ notification.actor.name|default:notification.actor.handle }}{% endif %}</a>
+            </li>
+          {% endfor %}
+        </ul>
+        <p><a href="{% url 'notifications' %}">All notifications</a></p>
+      </section>
+    {% endif %}
+    <section class="feed-pages">
+      <h2>New pages from comics you follow</h2>
+      <ul>
+        {% for page in page_obj %}
+          <li>
+            <a href="{% url 'reader-page' page.series.comic.slug page.series.slug page.position %}">
+              <strong>{{ page.title|default:"Page" }}</strong>
+              <span>{{ page.series.comic.title }} · {{ page.series.title }}</span>
+              {% if page.published_at %}<time>{{ page.published_at|date:"Y-m-d" }}</time>{% endif %}
+            </a>
+          </li>
+        {% empty %}
+          <li>Follow a comic to see new pages here.</li>
+        {% endfor %}
+      </ul>
+      <nav class="pagination">
+        {% if page_obj.has_previous %}<a href="?page={{ page_obj.previous_page_number }}">Newer</a>{% endif %}
+        <span>Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+        {% if page_obj.has_next %}<a href="?page={{ page_obj.next_page_number }}">Older</a>{% endif %}
+      </nav>
+    </section>
+  </section>
+{% endblock %}
