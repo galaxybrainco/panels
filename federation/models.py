@@ -28,6 +28,7 @@ class Delivery(UUIDModel):
     max_attempts = models.PositiveIntegerField(default=6)
     next_attempt_at = models.DateTimeField(null=True, blank=True)
     last_error = models.TextField(blank=True, default="")
+    synchronization = models.JSONField(default=dict, blank=True)
 
     class Meta:
         indexes = [models.Index(fields=["status", "next_attempt_at"])]

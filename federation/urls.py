@@ -10,6 +10,11 @@ urlpatterns = [
         "actors/<str:handle>/followers", views.actor_followers, name="actor-followers"
     ),
     path(
+        "actors/<str:handle>/followers_synchronization",
+        views.followers_synchronization,
+        name="actor-followers-synchronization",
+    ),
+    path(
         "actors/<str:handle>/following", views.actor_following, name="actor-following"
     ),
     path("actors/<str:handle>/featured", views.actor_featured, name="actor-featured"),

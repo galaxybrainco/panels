@@ -5,7 +5,7 @@ from django.core.cache import cache
 from django.tasks import task
 from django.utils import timezone
 
-from federation import client, policy
+from federation import client, follower_sync, policy
 from federation.models import Delivery, DeliveryStatus
 
 BACKOFF_SCHEDULE = [60, 300, 1800, 7200, 43200, 86400]
@@ -82,8 +82,17 @@ def _deliver(delivery_id):
         _reschedule_throttled(delivery)
         return
     try:
+        extra = (
+            {
+                "Collection-Synchronization": follower_sync.header_value(
+                    delivery.synchronization
+                )
+            }
+            if delivery.synchronization
+            else None
+        )
         response = client.post_activity(
-            delivery.inbox_url, delivery.activity, delivery.actor
+            delivery.inbox_url, delivery.activity, delivery.actor, extra_headers=extra
         )
     except Exception as exc:
         _reschedule(delivery, str(exc))

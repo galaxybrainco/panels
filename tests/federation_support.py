@@ -11,18 +11,24 @@ from federation.rfc9421 import sign_rfc9421
 SIGNED_HEADERS = ("Date", "Digest", "Signature", "Signature-Input", "Content-Digest")
 
 
-def signed_headers(actor, url, body, *, scheme="cavage", key_id=None):
+def signed_headers(actor, url, body, *, scheme="cavage", key_id=None, method="POST"):
+    headers = {
+        "Host": urlparse(url).netloc,
+        "Date": formatdate(usegmt=True),
+    }
+    if method != "GET":
+        headers.update(
+            {
+                "Content-Type": "application/activity+json",
+                "Digest": legacy_digest(body),
+                "Content-Digest": content_digest(body),
+            }
+        )
     message = requests.Request(
-        "POST",
+        method,
         url,
-        data=body,
-        headers={
-            "Host": urlparse(url).netloc,
-            "Date": formatdate(usegmt=True),
-            "Content-Type": "application/activity+json",
-            "Digest": legacy_digest(body),
-            "Content-Digest": content_digest(body),
-        },
+        data=body if method != "GET" else None,
+        headers=headers,
     ).prepare()
     keys = load_actor_keys(actor)
     key_id = key_id or f"{actor.ap_id}#main-key"
@@ -30,7 +36,10 @@ def signed_headers(actor, url, body, *, scheme="cavage", key_id=None):
         sign_rfc9421(message, keys.rsa_private_key, key_id)
     else:
         message.headers["Signature"] = sign_cavage(
-            message, keys.rsa_private_key, key_id
+            message,
+            keys.rsa_private_key,
+            key_id,
+            None if method != "GET" else ["(request-target)", "host", "date"],
         )
     return message.headers
 

@@ -5,7 +5,7 @@ import requests
 from django.core.cache import cache
 from django.http import JsonResponse
 
-from federation import handlers, http_signatures, remotes, rfc9421
+from federation import follower_sync, handlers, http_signatures, remotes, rfc9421
 from federation.models import Activity, ActivityStatus
 from moderation import blocks
 
@@ -122,6 +122,9 @@ def process_inbox(request):
         return JsonResponse({"error": "rate limited"}, status=429)
     if blocks.should_drop_inbound(actor, document.get("type")):
         return JsonResponse({"accepted": True}, status=202)
+    header = request.headers.get("Collection-Synchronization")
+    if header:
+        follower_sync.receive(actor, header)
 
     from moderation import accounts
 
