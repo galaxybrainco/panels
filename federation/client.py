@@ -66,15 +66,23 @@ def _base_headers(body, has_body):
 def _sign(message, actor, scheme, *, has_body):
     keys = load_actor_keys(actor)
     key_id = f"{actor.ap_id}#main-key"
+    has_sync = "Collection-Synchronization" in message.headers
     if scheme == SignatureScheme.RFC9421:
         covered = (
             ("@method", "@target-uri", "content-digest")
             if has_body
             else ("@method", "@target-uri")
         )
+        if has_sync:
+            covered = (*covered, "collection-synchronization")
         rfc9421.sign_rfc9421(message, keys.rsa_private_key, key_id, covered)
     else:
         headers = None if has_body else CAVAGE_GET_HEADERS
+        if has_sync:
+            headers = [
+                *(headers or http_signatures.DEFAULT_CAVAGE_HEADERS),
+                "collection-synchronization",
+            ]
         message.headers["Signature"] = http_signatures.sign_cavage(
             message, keys.rsa_private_key, key_id, headers
         )
@@ -101,6 +109,7 @@ def signed_request(
     timeout=DEFAULT_TIMEOUT,
     accept=None,
     stream=False,
+    extra_headers=None,
 ):
     has_body = body is not None
     payload = json.dumps(body).encode("utf-8") if has_body else None
@@ -118,6 +127,8 @@ def signed_request(
             headers["Content-Type"] = ACTIVITYPUB_CONTENT_TYPE
         if accept:
             headers["Accept"] = accept
+        if extra_headers:
+            headers.update(extra_headers)
         request = requests.Request(method, url, data=payload, headers=headers)
         prepared = request.prepare()
         _sign(prepared, actor, scheme, has_body=has_body)
@@ -131,9 +142,17 @@ def signed_request(
     return last_response
 
 
-def post_activity(url, activity, actor, *, session=None, timeout=DEFAULT_TIMEOUT):
+def post_activity(
+    url, activity, actor, *, session=None, timeout=DEFAULT_TIMEOUT, extra_headers=None
+):
     return signed_request(
-        "POST", url, body=activity, actor=actor, session=session, timeout=timeout
+        "POST",
+        url,
+        body=activity,
+        actor=actor,
+        session=session,
+        timeout=timeout,
+        extra_headers=extra_headers,
     )
 
 

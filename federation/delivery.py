@@ -1,4 +1,5 @@
 from actors.models import Actor
+from federation import follower_sync
 from federation.models import Delivery
 
 
@@ -12,11 +13,16 @@ def unique_inboxes(urls):
     return result
 
 
-def enqueue_delivery(activity, inbox_url, actor: Actor) -> Delivery:
+def enqueue_delivery(
+    activity, inbox_url, actor: Actor, synchronization=None
+) -> Delivery:
     from federation.tasks import deliver_activity
 
     delivery = Delivery.objects.create(
-        inbox_url=inbox_url, activity=activity, actor=actor
+        inbox_url=inbox_url,
+        activity=activity,
+        actor=actor,
+        synchronization=synchronization or {},
     )
     deliver_activity.enqueue(str(delivery.id))
     return delivery
@@ -30,7 +36,12 @@ def _allowed(url):
 
 def fan_out(activity, inbox_urls, actor: Actor):
     return [
-        enqueue_delivery(activity, url, actor)
+        enqueue_delivery(
+            activity,
+            url,
+            actor,
+            synchronization=follower_sync.header_params(actor, url),
+        )
         for url in unique_inboxes(inbox_urls)
         if _allowed(url)
     ]
