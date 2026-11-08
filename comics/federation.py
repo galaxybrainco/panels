@@ -30,6 +30,10 @@ def _note_id(page) -> str:
     return page.ap_id or _page_url(page)
 
 
+def page_note_id(page) -> str:
+    return _note_id(page)
+
+
 def federation_plan(page) -> FederationPlan:
     if page.federation == FederationMode.LOCAL_ONLY:
         return FederationPlan(emit=False)
@@ -76,6 +80,8 @@ def page_to_note(page, plan=None) -> dict:
         "to": plan.to,
         "cc": plan.cc,
         "attachment": [_attachment(media) for media in page.media.all()],
+        "context": page.series.comic.actor.outbox,
+        "indexable": page.indexable,
     }
     if page.published_at is not None:
         note["published"] = page.published_at.isoformat()
