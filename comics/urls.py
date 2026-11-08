@@ -10,6 +10,26 @@ urlpatterns = [
         views.payment_links,
         name="comic-payment-links",
     ),
+    path(
+        "comics/<slug:slug>/quotes",
+        views.quote_request_list,
+        name="comic-quotes",
+    ),
+    path(
+        "comics/<slug:slug>/quotes/<uuid:request_id>",
+        views.quote_decision,
+        name="comic-quote-decision",
+    ),
+    path(
+        "comics/<slug:slug>/<slug:series_slug>/<int:position>/quote-policy",
+        views.set_quote_policy,
+        name="comic-quote-policy",
+    ),
+    path(
+        "quote-authorizations/<uuid:authorization_uuid>",
+        views.quote_authorization,
+        name="quote-authorization",
+    ),
     path("comics/<slug:slug>/", reader_views.comic_home, name="comic-home"),
     path("comics/<slug:slug>/latest/", reader_views.latest, name="comic-latest"),
     path(

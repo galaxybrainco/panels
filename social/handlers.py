@@ -22,8 +22,10 @@ def _resolve_reaction_target(object_id):
 
 @handlers.register("Create")
 def handle_create(activity):
+    from comics import quotes
     from social.tasks import crawl_comment_thread
 
+    quotes.process_inbound_quote(activity)
     comment = store_inbound_reply(
         activity.payload.get("object"), activity.actor, activity_id=activity.ap_id
     )

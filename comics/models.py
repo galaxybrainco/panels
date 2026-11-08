@@ -138,6 +138,12 @@ class Chapter(UUIDModel):
         return self.title
 
 
+class QuotePolicy(models.TextChoices):
+    ALLOW = "allow", "Allow"
+    MANUAL = "manual", "Manual approval"
+    DENY = "deny", "Deny"
+
+
 class PageStatus(models.TextChoices):
     DRAFT = "draft", "Draft"
     SCHEDULED = "scheduled", "Scheduled"
@@ -185,6 +191,9 @@ class Page(UUIDModel):
         max_length=16, choices=Audience.choices, default=Audience.PUBLIC
     )
     indexable = models.BooleanField(default=True)
+    quote_policy = models.CharField(
+        max_length=16, choices=QuotePolicy.choices, default=QuotePolicy.MANUAL
+    )
     required_tier = models.ForeignKey(
         "memberships.Tier",
         on_delete=models.SET_NULL,
@@ -226,3 +235,28 @@ class Page(UUIDModel):
 
     def __str__(self):
         return f"{self.series} #{self.position}"
+
+
+class QuoteStatus(models.TextChoices):
+    PENDING = "pending", "Pending"
+    APPROVED = "approved", "Approved"
+    REJECTED = "rejected", "Rejected"
+
+
+class QuoteRequest(UUIDModel):
+    page = models.ForeignKey(
+        Page, on_delete=models.CASCADE, related_name="quote_requests"
+    )
+    actor = models.ForeignKey(
+        "actors.Actor", on_delete=models.CASCADE, related_name="quote_requests"
+    )
+    quote_id = models.URLField(unique=True)
+    activity_id = models.CharField(max_length=255, blank=True, default="")
+    authorization_id = models.CharField(max_length=255, blank=True, default="")
+    status = models.CharField(
+        max_length=16, choices=QuoteStatus.choices, default=QuoteStatus.PENDING
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
