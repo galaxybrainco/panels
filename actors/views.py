@@ -1,11 +1,15 @@
+import json
 from pathlib import Path
 
 from django.conf import settings
+from django.contrib.auth.decorators import login_required
 from django.http import Http404, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404
 from django.urls import reverse
+from django.views.decorators.http import require_POST
 
 from accounts.models import User
+from actors import portability
 from actors.activitypub import ACTIVITYPUB_CONTENT_TYPE, actor_to_activitypub
 from actors.models import Actor
 from actors.software import SOFTWARE_NAME, SOFTWARE_VERSION
@@ -93,4 +97,23 @@ def federation_md(request):
     return HttpResponse(
         path.read_text(encoding="utf-8"),
         content_type="text/markdown; charset=utf-8",
+    )
+
+
+@login_required
+@require_POST
+def move_actor(request, handle):
+    actor = get_object_or_404(Actor, handle=handle, domain="")
+    try:
+        data = json.loads(request.body or b"{}")
+    except ValueError:
+        return JsonResponse({"error": "invalid_payload"}, status=400)
+    try:
+        portability.move_actor(actor, request.user, data.get("target"))
+    except portability.NotPermittedError:
+        return JsonResponse({"error": "not_owner"}, status=403)
+    except portability.InvalidTargetError:
+        return JsonResponse({"error": "invalid_target"}, status=400)
+    return JsonResponse(
+        {"moved_to": actor.moved_to, "also_known_as": actor.also_known_as}
     )

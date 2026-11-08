@@ -34,6 +34,8 @@ class Actor(UUIDModel):
 
     manually_approves_followers = models.BooleanField(default=False)
     indexable = models.BooleanField(default=True)
+    also_known_as = models.JSONField(default=list, blank=True)
+    moved_to = models.URLField(blank=True, default="")
     discoverable = models.BooleanField(default=True)
     is_instance_actor = models.BooleanField(default=False)
 
