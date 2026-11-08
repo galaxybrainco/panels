@@ -6,6 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Panels{% endblock %}</title>
   <link rel="stylesheet" href="{% static 'css/reader.css' %}">
+  {% block extra_head %}{% endblock %}
 </head>
 <body>
   <header class="site-header">

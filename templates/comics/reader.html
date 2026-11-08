@@ -1,5 +1,17 @@
 {% extends "comics/base.html" %}
 {% block title %}{{ page.title|default:"Page" }} — {{ comic.title }}{% endblock %}
+{% block extra_head %}
+  <link rel="alternate" type="application/rss+xml" title="{{ comic.title }} RSS" href="{{ request.scheme }}://{{ request.get_host }}{% url 'comic-rss' comic.slug %}">
+  <link rel="alternate" type="application/atom+xml" title="{{ comic.title }} Atom" href="{{ request.scheme }}://{{ request.get_host }}{% url 'comic-atom' comic.slug %}">
+  <link rel="alternate" type="application/json+oembed" href="{{ request.scheme }}://{{ request.get_host }}{% url 'oembed' %}?url={{ request.build_absolute_uri|urlencode }}&amp;format=json">
+  <meta property="og:type" content="article">
+  <meta property="og:title" content="{{ page.title|default:"Page" }} — {{ comic.title }}">
+  <meta property="og:description" content="{{ page.transcript|default:page.author_commentary|truncatechars:200 }}">
+  <meta property="og:url" content="{{ request.build_absolute_uri }}">
+  {% if images.0.url %}<meta property="og:image" content="{{ images.0.url }}">{% endif %}
+  {% if page.published_at %}<meta property="article:published_time" content="{{ page.published_at|date:"c" }}">{% endif %}
+  <meta name="twitter:card" content="summary_large_image">
+{% endblock %}
 {% block content %}
   <div id="reader-shell">
     {% include "comics/_reader.html" %}
