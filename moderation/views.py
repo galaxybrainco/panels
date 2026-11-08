@@ -9,7 +9,7 @@ from django.utils.dateparse import parse_datetime
 from django.views.decorators.http import require_http_methods
 
 from actors.models import Actor
-from comics.models import Page
+from comics.models import Comic, Page
 from moderation import accounts as account_services
 from moderation import blocks as block_services
 from moderation import domains as domain_services
@@ -561,3 +561,23 @@ def registration_ips(request):
     except registration_services.InvalidAddressError, report_services.NotPermittedError:
         return _error("invalid_address", 400)
     return JsonResponse({"removed": True})
+
+
+@login_required
+@require_http_methods(["POST"])
+def feature_comic(request, comic_id):
+    if not request.user.is_staff:
+        return _error("not_permitted", 403)
+    comic = get_object_or_404(Comic, pk=comic_id)
+    try:
+        data = _payload(request)
+        from comics import discovery
+
+        discovery.set_featured(comic, request.user, data.get("featured"))
+    except services.InvalidPayloadError:
+        return _error("invalid_payload", 400)
+    except report_services.NotPermittedError:
+        return _error("not_permitted", 403)
+    except ValidationError:
+        return _error("invalid_featured", 400)
+    return JsonResponse({"featured": comic.featured})

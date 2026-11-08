@@ -1,0 +1,45 @@
+{% extends "comics/base.html" %}
+{% block title %}Discover{% endblock %}
+{% block content %}
+  <section class="discover">
+    <h1>Discover</h1>
+    <form method="get" class="discover-search">
+      <input type="search" name="q" value="{{ q }}" placeholder="Search comics, tags, creators">
+      <select name="rating">
+        <option value="all"{% if rating == "all" %} selected{% endif %}>All ratings</option>
+        {% for value, label in ratings %}
+          <option value="{{ value }}"{% if rating == value %} selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+      <button type="submit">Search</button>
+    </form>
+    {% if tag %}
+      <p class="active-tag">Tag: {{ tag }} · <a href="{% url 'discover' %}">Clear</a></p>
+    {% endif %}
+    <ul class="discover-list">
+      {% for card in page_obj %}
+        <li>
+          <a href="{% url 'comic-home' card.comic.slug %}">
+            {% if card.cover %}<img src="{{ card.cover }}" alt="" loading="lazy">{% endif %}
+            {% if card.comic.featured %}<span class="featured">Featured</span>{% endif %}
+            <strong>{{ card.comic.title }}</strong>
+          </a>
+          <small>{{ card.comic.get_content_rating_display }} · @{{ card.comic.actor.handle }}</small>
+          {% if card.comic.description %}<p>{{ card.comic.description|truncatechars:140 }}</p>{% endif %}
+          {% if card.tags %}
+            <p class="tags">
+              {% for tag in card.tags %}<a href="?tag={{ tag.slug|urlencode }}">{{ tag.name }}</a>{% endfor %}
+            </p>
+          {% endif %}
+        </li>
+      {% empty %}
+        <li>No comics found.</li>
+      {% endfor %}
+    </ul>
+    <nav class="pagination">
+      {% if page_obj.has_previous %}<a href="?q={{ q|urlencode }}&rating={{ rating }}&tag={{ tag|urlencode }}&page={{ page_obj.previous_page_number }}">Previous</a>{% endif %}
+      <span>Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+      {% if page_obj.has_next %}<a href="?q={{ q|urlencode }}&rating={{ rating }}&tag={{ tag|urlencode }}&page={{ page_obj.next_page_number }}">Next</a>{% endif %}
+    </nav>
+  </section>
+{% endblock %}
