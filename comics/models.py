@@ -138,6 +138,12 @@ class Chapter(UUIDModel):
         return self.title
 
 
+class ReplyPolicy(models.TextChoices):
+    EVERYONE = "everyone", "Everyone"
+    FOLLOWERS = "followers", "Followers"
+    NOBODY = "nobody", "Nobody"
+
+
 class QuotePolicy(models.TextChoices):
     ALLOW = "allow", "Allow"
     MANUAL = "manual", "Manual approval"
@@ -193,6 +199,9 @@ class Page(UUIDModel):
     indexable = models.BooleanField(default=True)
     quote_policy = models.CharField(
         max_length=16, choices=QuotePolicy.choices, default=QuotePolicy.MANUAL
+    )
+    reply_policy = models.CharField(
+        max_length=16, choices=ReplyPolicy.choices, default=ReplyPolicy.EVERYONE
     )
     required_tier = models.ForeignKey(
         "memberships.Tier",

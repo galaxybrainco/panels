@@ -5,6 +5,7 @@ from django.conf import settings
 from django.utils.html import escape
 
 from comics.models import FederationMode
+from comics.replies import interaction_policy
 from federation.activitypub import (
     Audience,
     activity_context,
@@ -82,6 +83,7 @@ def page_to_note(page, plan=None) -> dict:
         "attachment": [_attachment(media) for media in page.media.all()],
         "context": page.series.comic.actor.outbox,
         "indexable": page.indexable,
+        "interactionPolicy": interaction_policy(page),
     }
     if page.published_at is not None:
         note["published"] = page.published_at.isoformat()
