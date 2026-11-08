@@ -63,6 +63,11 @@ urlpatterns = [
     ),
     path("moderation/audit", views.audit_log, name="moderation-audit"),
     path(
+        "moderation/comics/<uuid:comic_id>/feature",
+        views.feature_comic,
+        name="moderation-comic-feature",
+    ),
+    path(
         "moderation/accounts/<uuid:actor_id>",
         views.account_detail,
         name="moderation-account-detail",
