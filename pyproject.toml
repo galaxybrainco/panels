@@ -41,6 +41,7 @@ ignore = ["E501"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "S105", "S106"]
+"scripts/**" = ["T201"]
 "config/settings/*.py" = ["S105", "S106"]
 "**/migrations/*.py" = ["I001"]
 

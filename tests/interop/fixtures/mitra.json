@@ -1,0 +1,67 @@
+{
+  "name": "Mitra",
+  "scheme": "rfc9421",
+  "actor": {
+    "id": "https://mitra.test/users/fan",
+    "preferredUsername": "fan",
+    "name": "Mitra Fan",
+    "inbox": "https://mitra.test/users/fan/inbox",
+    "endpoints": {"sharedInbox": "https://mitra.test/inbox"}
+  },
+  "activities": [
+    {
+      "type": "Follow",
+      "payload": {
+        "id": "https://mitra.test/activities/follow-1",
+        "type": "Follow",
+        "actor": "__ACTOR__",
+        "object": "__LOCAL_ACTOR__"
+      }
+    },
+    {
+      "type": "Create",
+      "payload": {
+        "id": "https://mitra.test/activities/create-1",
+        "type": "Create",
+        "actor": "__ACTOR__",
+        "object": {
+          "id": "https://mitra.test/notes/1",
+          "type": "Note",
+          "attributedTo": "__ACTOR__",
+          "inReplyTo": "__PAGE__",
+          "content": "<p>Mitra reply</p>",
+          "published": "2026-01-03T00:00:00Z",
+          "to": ["https://www.w3.org/ns/activitystreams#Public"]
+        }
+      }
+    },
+    {
+      "type": "Like",
+      "payload": {
+        "id": "https://mitra.test/activities/like-1",
+        "type": "Like",
+        "actor": "__ACTOR__",
+        "object": "__PAGE__"
+      }
+    },
+    {
+      "type": "Announce",
+      "payload": {
+        "id": "https://mitra.test/activities/announce-1",
+        "type": "Announce",
+        "actor": "__ACTOR__",
+        "object": {"id": "__PAGE__"}
+      }
+    },
+    {
+      "type": "Flag",
+      "payload": {
+        "id": "https://mitra.test/activities/flag-1",
+        "type": "Flag",
+        "actor": "__ACTOR__",
+        "object": "__LOCAL_ACTOR__",
+        "content": "abuse"
+      }
+    }
+  ]
+}

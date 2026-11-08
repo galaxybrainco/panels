@@ -1,0 +1,67 @@
+{
+  "name": "Mastodon 4.7",
+  "scheme": "rfc9421",
+  "actor": {
+    "id": "https://mastodon.test/users/comicfan",
+    "preferredUsername": "comicfan",
+    "name": "Comic Fan",
+    "inbox": "https://mastodon.test/users/comicfan/inbox",
+    "endpoints": {"sharedInbox": "https://mastodon.test/inbox"}
+  },
+  "activities": [
+    {
+      "type": "Follow",
+      "payload": {
+        "id": "https://mastodon.test/activities/follow-1",
+        "type": "Follow",
+        "actor": "__ACTOR__",
+        "object": "__LOCAL_ACTOR__"
+      }
+    },
+    {
+      "type": "Create",
+      "payload": {
+        "id": "https://mastodon.test/activities/create-1",
+        "type": "Create",
+        "actor": "__ACTOR__",
+        "object": {
+          "id": "https://mastodon.test/notes/1",
+          "type": "Note",
+          "attributedTo": "__ACTOR__",
+          "inReplyTo": "__PAGE__",
+          "content": "<p>Lovely page</p>",
+          "published": "2026-01-01T00:00:00Z",
+          "to": ["https://www.w3.org/ns/activitystreams#Public"]
+        }
+      }
+    },
+    {
+      "type": "Like",
+      "payload": {
+        "id": "https://mastodon.test/activities/like-1",
+        "type": "Like",
+        "actor": "__ACTOR__",
+        "object": "__PAGE__"
+      }
+    },
+    {
+      "type": "Announce",
+      "payload": {
+        "id": "https://mastodon.test/activities/announce-1",
+        "type": "Announce",
+        "actor": "__ACTOR__",
+        "object": "__PAGE__"
+      }
+    },
+    {
+      "type": "Flag",
+      "payload": {
+        "id": "https://mastodon.test/activities/flag-1",
+        "type": "Flag",
+        "actor": "__ACTOR__",
+        "object": "__LOCAL_ACTOR__",
+        "content": "spam"
+      }
+    }
+  ]
+}

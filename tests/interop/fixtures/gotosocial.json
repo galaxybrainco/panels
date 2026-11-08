@@ -1,0 +1,67 @@
+{
+  "name": "GoToSocial",
+  "scheme": "cavage",
+  "actor": {
+    "id": "https://gts.test/users/fan",
+    "preferredUsername": "fan",
+    "name": "GTS Fan",
+    "inbox": "https://gts.test/users/fan/inbox",
+    "endpoints": {"sharedInbox": "https://gts.test/inbox"}
+  },
+  "activities": [
+    {
+      "type": "Follow",
+      "payload": {
+        "id": "https://gts.test/activities/follow-1",
+        "type": "Follow",
+        "actor": "__ACTOR__",
+        "object": "__LOCAL_ACTOR__"
+      }
+    },
+    {
+      "type": "Create",
+      "payload": {
+        "id": "https://gts.test/activities/create-1",
+        "type": "Create",
+        "actor": "__ACTOR__",
+        "object": {
+          "id": "https://gts.test/statuses/1",
+          "type": "Note",
+          "attributedTo": "__ACTOR__",
+          "inReplyTo": "__PAGE__",
+          "content": "<p>GoToSocial reply</p>",
+          "published": "2026-01-02T00:00:00Z",
+          "to": ["https://www.w3.org/ns/activitystreams#Public"]
+        }
+      }
+    },
+    {
+      "type": "Like",
+      "payload": {
+        "id": "https://gts.test/activities/like-1",
+        "type": "Like",
+        "actor": "__ACTOR__",
+        "object": "__PAGE__"
+      }
+    },
+    {
+      "type": "Announce",
+      "payload": {
+        "id": "https://gts.test/activities/announce-1",
+        "type": "Announce",
+        "actor": "__ACTOR__",
+        "object": "__PAGE__"
+      }
+    },
+    {
+      "type": "Flag",
+      "payload": {
+        "id": "https://gts.test/activities/flag-1",
+        "type": "Flag",
+        "actor": "__ACTOR__",
+        "object": "__LOCAL_ACTOR__",
+        "content": "report"
+      }
+    }
+  ]
+}
