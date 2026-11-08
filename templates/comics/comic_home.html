@@ -16,6 +16,7 @@
     <h1>{{ comic.title }}</h1>
     {% if comic.description %}<p>{{ comic.description }}</p>{% endif %}
     {% if latest_url %}<p><a class="button" href="{{ latest_url }}">Read latest</a></p>{% endif %}
+    {% if show_dashboard %}<p><a href="{% url 'comic-dashboard' comic.slug %}">Creator dashboard</a></p>{% endif %}
     <ul class="series-list">
       {% for card in cards %}
         <li>

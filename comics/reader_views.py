@@ -8,7 +8,7 @@ from django.urls import reverse
 from django.views.decorators.vary import vary_on_headers
 
 from actors.models import Actor
-from comics import reading
+from comics import permissions, reading
 from comics.models import Comic, Page, PageStatus, Series
 from media.derivative_urls import DerivativeKind, derivative_url
 from memberships.services import can_view_page, page_requires_tier
@@ -106,7 +106,13 @@ def comic_home(request, slug):
     return render(
         request,
         "comics/comic_home.html",
-        {"comic": comic, "cards": cards, "latest_url": latest_url},
+        {
+            "comic": comic,
+            "cards": cards,
+            "latest_url": latest_url,
+            "show_dashboard": permissions.can_edit(request.user, comic)
+            or permissions.can_moderate(request.user, comic),
+        },
     )
 
 

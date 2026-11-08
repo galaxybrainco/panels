@@ -1,0 +1,96 @@
+{% extends "comics/base.html" %}
+{% block title %}Dashboard — {{ comic.title }}{% endblock %}
+{% block content %}
+  <article class="dashboard">
+    <p><a href="{% url 'comic-home' comic.slug %}">{{ comic.title }}</a></p>
+    <h1>Creator dashboard</h1>
+    <section class="stats">
+      <div><strong>{{ local_followers }}</strong><span>local followers</span></div>
+      <div><strong>{{ remote_followers }}</strong><span>remote followers</span></div>
+      <div><strong>{{ series_count }}</strong><span>series</span></div>
+      <div><strong>{{ counts.draft }}</strong><span>drafts</span></div>
+      <div><strong>{{ counts.scheduled }}</strong><span>scheduled</span></div>
+      <div><strong>{{ counts.published }}</strong><span>published</span></div>
+    </section>
+
+    {% if show_editor %}
+      <section class="schedule">
+        <h2>Schedule — {{ month_label }}</h2>
+        <p>
+          <a href="?month={{ prev_month }}">← Previous</a>
+          <a href="?month={{ next_month }}">Next →</a>
+        </p>
+        <table class="calendar">
+          <thead><tr><th>Mon</th><th>Tue</th><th>Wed</th><th>Thu</th><th>Fri</th><th>Sat</th><th>Sun</th></tr></thead>
+          <tbody>
+            {% for week in weeks %}
+              <tr>
+                {% for day in week %}
+                  <td class="{% if not day.in_month %}outside{% endif %}">
+                    <span class="day-number">{{ day.date|date:"j" }}</span>
+                    {% for item in day.items %}
+                      <span class="calendar-item {% if item.scheduled %}scheduled{% else %}published{% endif %}">{{ item.page.title|default:"Page" }}</span>
+                    {% endfor %}
+                  </td>
+                {% endfor %}
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        <h3>Upcoming</h3>
+        <ul>
+          {% for page in upcoming %}
+            <li>{{ page.scheduled_for|date:"Y-m-d H:i" }} · {{ page.title|default:"Page" }}</li>
+          {% empty %}<li>Nothing scheduled.</li>{% endfor %}
+        </ul>
+        <h3>Recent pages</h3>
+        <ul>
+          {% for page in recent_pages %}
+            <li>
+              {% if page.status == "published" %}<a href="{% url 'reader-page' comic.slug page.series.slug page.position %}">{{ page.title|default:"Page" }}</a>{% else %}{{ page.title|default:"Page" }}{% endif %}
+              · {{ page.get_status_display }} · #{{ page.position }}
+            </li>
+          {% empty %}<li>No pages yet.</li>{% endfor %}
+        </ul>
+      </section>
+    {% endif %}
+
+    {% if show_moderation %}
+      <section class="moderation-queue">
+        <h2>Moderation queue</h2>
+        {% if reports %}
+          <ul>
+            {% for report in reports %}
+              <li>{{ report.get_category_display }} · {{ report.status }} · {{ report.reason|truncatechars:100 }}</li>
+            {% endfor %}
+          </ul>
+          <p><a href="{% url 'moderation-reports' %}">Open the reports queue</a></p>
+        {% else %}
+          <p>No open reports.</p>
+        {% endif %}
+      </section>
+    {% endif %}
+
+    {% if show_owner %}
+      <section class="members">
+        <h2>Members</h2>
+        <p>{{ supporter_count }} active supporter{{ supporter_count|pluralize }}</p>
+        <ul>
+          {% for status in supporters %}
+            <li>{{ status.link.provider_email|default:status.link.actor.ap_id }} · {{ status.tier.name }}{% if status.valid_until %} · until {{ status.valid_until|date:"Y-m-d" }}{% endif %}</li>
+          {% empty %}<li>No active supporters.</li>{% endfor %}
+        </ul>
+      </section>
+      <section class="plan">
+        <h2>Plan</h2>
+        {% if plan %}
+          <p>{{ plan.get_status_display }} · {{ plan.quota_bytes }} bytes</p>
+        {% else %}
+          <p>No paid plan row.</p>
+        {% endif %}
+        <p>Storage: {{ used_bytes }} / {{ quota_bytes }} bytes</p>
+        <p>{{ pending_quotes }} pending quote request{{ pending_quotes|pluralize }}</p>
+      </section>
+    {% endif %}
+  </article>
+{% endblock %}
