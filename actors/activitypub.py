@@ -62,4 +62,8 @@ def actor_to_activitypub(actor: Actor) -> dict:
     attachments = _payment_attachments(actor)
     if attachments:
         document["attachment"] = attachments
+    if actor.also_known_as:
+        document["alsoKnownAs"] = list(actor.also_known_as)
+    if actor.moved_to:
+        document["movedTo"] = actor.moved_to
     return document

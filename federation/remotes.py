@@ -77,6 +77,10 @@ def fetch_remote_actor(ap_id):
             "shared_inbox": endpoints.get("sharedInbox", ""),
             "public_key_pem": public_key_pem,
             "ed25519_public_key": _ed25519_public_key(document),
+            "also_known_as": document.get("alsoKnownAs")
+            if isinstance(document.get("alsoKnownAs"), list)
+            else [],
+            "moved_to": document.get("movedTo") or "",
             "last_fetched_at": timezone.now(),
         },
     )
