@@ -1,5 +1,16 @@
 {% extends "comics/base.html" %}
 {% block title %}{{ comic.title }}{% endblock %}
+{% block extra_head %}
+  <link rel="alternate" type="application/rss+xml" title="{{ comic.title }} RSS" href="{{ request.scheme }}://{{ request.get_host }}{% url 'comic-rss' comic.slug %}">
+  <link rel="alternate" type="application/atom+xml" title="{{ comic.title }} Atom" href="{{ request.scheme }}://{{ request.get_host }}{% url 'comic-atom' comic.slug %}">
+  <link rel="alternate" type="application/json+oembed" href="{{ request.scheme }}://{{ request.get_host }}{% url 'oembed' %}?url={{ request.build_absolute_uri|urlencode }}&amp;format=json">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="{{ comic.title }}">
+  <meta property="og:description" content="{{ comic.description|truncatechars:200 }}">
+  <meta property="og:url" content="{{ request.build_absolute_uri }}">
+  {% if cards.0.thumb %}<meta property="og:image" content="{{ cards.0.thumb }}">{% endif %}
+  <meta name="twitter:card" content="summary_large_image">
+{% endblock %}
 {% block content %}
   <article class="comic-home">
     <h1>{{ comic.title }}</h1>
