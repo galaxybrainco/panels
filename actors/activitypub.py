@@ -6,8 +6,26 @@ from federation.keys import ed25519_multikey
 ACTIVITYPUB_CONTENT_TYPE = "application/activity+json"
 
 
+def _payment_attachments(actor):
+    comic = getattr(actor, "comic", None)
+    if comic is None:
+        return []
+    attachments = []
+    for link in comic.payment_links or []:
+        if not isinstance(link, dict) or not link.get("url"):
+            continue
+        attachment = {
+            "type": "Link",
+            "href": link["url"],
+            "name": link.get("name") or "Support",
+            "rel": link.get("rel") or "payment",
+        }
+        attachments.append(attachment)
+    return attachments
+
+
 def actor_to_activitypub(actor: Actor) -> dict:
-    return {
+    document = {
         "@context": [
             "https://www.w3.org/ns/activitystreams",
             "https://w3id.org/security/v1",
@@ -41,3 +59,7 @@ def actor_to_activitypub(actor: Actor) -> dict:
         },
         "endpoints": {"sharedInbox": actor.shared_inbox},
     }
+    attachments = _payment_attachments(actor)
+    if attachments:
+        document["attachment"] = attachments
+    return document

@@ -48,6 +48,7 @@ class Comic(UUIDModel):
     require_reply_approval = models.BooleanField(default=False)
     featured = models.BooleanField(default=False)
     tags = models.ManyToManyField(Tag, blank=True, related_name="comics")
+    payment_links = models.JSONField(default=list, blank=True)
 
     class Meta:
         ordering = ["title", "id"]
@@ -183,6 +184,7 @@ class Page(UUIDModel):
     audience = models.CharField(
         max_length=16, choices=Audience.choices, default=Audience.PUBLIC
     )
+    indexable = models.BooleanField(default=True)
     required_tier = models.ForeignKey(
         "memberships.Tier",
         on_delete=models.SET_NULL,

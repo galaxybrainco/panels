@@ -2,7 +2,7 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import transaction
 
-from comics.federation import federation_plan
+from comics.federation import federation_plan, page_note_id
 from comics.models import Page, PageStatus
 from federation.activitypub import activity_context
 from social.models import Comment, CommentStatus
@@ -53,6 +53,7 @@ def comment_to_note(comment):
         "cc": [comic.actor.followers],
         "content": comment.content,
         "published": comment.created_at.isoformat(),
+        "context": page_note_id(comment.page),
     }
 
 
