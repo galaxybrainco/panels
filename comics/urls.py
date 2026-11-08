@@ -26,6 +26,11 @@ urlpatterns = [
         name="comic-quote-policy",
     ),
     path(
+        "comics/<slug:slug>/<slug:series_slug>/<int:position>/reply-policy",
+        views.set_reply_policy,
+        name="comic-reply-policy",
+    ),
+    path(
         "quote-authorizations/<uuid:authorization_uuid>",
         views.quote_authorization,
         name="quote-authorization",

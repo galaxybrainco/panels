@@ -4,6 +4,7 @@ from django.db import transaction
 
 from comics.federation import federation_plan, page_note_id
 from comics.models import Page, PageStatus
+from comics.replies import can_reply
 from federation.activitypub import activity_context
 from social.models import Comment, CommentStatus
 from social.moderation import is_banned
@@ -22,6 +23,8 @@ def add_comment(actor, page, content, parent=None):
         raise ValidationError("Comments require a published page.")
     if is_banned(page.series.comic, actor):
         raise ValidationError("You are banned from replying to this comic.")
+    if not can_reply(page, actor):
+        raise ValidationError("You cannot reply to this page.")
     if parent is not None and parent.page_id != page.id:
         raise ValidationError("The parent comment belongs to a different page.")
     comment = Comment(
@@ -95,6 +98,8 @@ def store_inbound_reply(note, actor, activity_id=""):
         if page.status != PageStatus.PUBLISHED or not federation_plan(page).emit:
             return None
     if is_banned(page.series.comic, actor):
+        return None
+    if not can_reply(page, actor):
         return None
     comment = Comment.objects.create(
         actor=actor,
