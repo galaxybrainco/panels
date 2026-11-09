@@ -13,10 +13,10 @@ This document (FEP-67ff) describes the ActivityPub capabilities of this server.
 - **Delivery, inbox, and outbox** — Django Tasks delivery with retries, shared/actor inboxes, and actor collections.
 - **Follower synchronization (FEP-8fcf)** — Collection-Synchronization headers and authenticated partial follower collections.
 - **Account portability** — actor `alsoKnownAs`/`movedTo`, outbound `Move`, inbound follow migration, and an account export command.
+- **Object integrity proofs (FEP-8b32)** — eddsa-jcs-2022 proofs on outbound activities and served page Notes, verified on inbound activities.
 - **Page `Note` objects** — published pages serialize to ActivityStreams `Note`s with image attachments at `{INSTANCE_URL}/pages/{id}` (`application/activity+json`); `Create`/`Update`/`Delete` are emitted for federated pages and exposed in the comic actor's outbox.
 - **Comment `Note` objects** — replies on pages are stored as threaded `Comment`s and served at `{INSTANCE_URL}/comments/{id}` (`application/activity+json`); inbound `Create`/`Note` replies are accepted.
 
 ## Planned
 
-- Object integrity proofs (FEP-8b32).
 - Search-indexing consent (FEP-5feb), quote/reply policy FEPs, and WebSub.
