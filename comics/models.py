@@ -269,3 +269,20 @@ class QuoteRequest(UUIDModel):
 
     class Meta:
         ordering = ["-created_at"]
+
+
+class PageView(UUIDModel):
+    page = models.ForeignKey(Page, on_delete=models.CASCADE, related_name="views")
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="page_views",
+    )
+    session_hash = models.CharField(max_length=64, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [models.Index(fields=["page", "created_at"])]
+        ordering = ["-created_at"]
