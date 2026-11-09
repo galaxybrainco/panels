@@ -1,5 +1,5 @@
 from actors.models import Actor
-from federation import follower_sync
+from federation import follower_sync, integrity
 from federation.models import Delivery
 
 
@@ -35,6 +35,8 @@ def _allowed(url):
 
 
 def fan_out(activity, inbox_urls, actor: Actor):
+    if isinstance(activity, dict) and actor.ed25519_private_key:
+        activity = integrity.attach_proof(activity, actor)
     return [
         enqueue_delivery(
             activity,

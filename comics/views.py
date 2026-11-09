@@ -25,9 +25,12 @@ def page_detail(request, page_id):
     plan = federation_plan(page)
     if not plan.emit:
         raise Http404
-    response = JsonResponse(
-        page_to_note(page, plan=plan), content_type=ACTIVITYPUB_CONTENT_TYPE
+    from federation import integrity
+
+    note = integrity.attach_proof(
+        page_to_note(page, plan=plan), page.series.comic.actor
     )
+    response = JsonResponse(note, content_type=ACTIVITYPUB_CONTENT_TYPE)
     response["Access-Control-Allow-Origin"] = "*"
     return response
 

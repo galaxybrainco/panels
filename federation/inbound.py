@@ -5,7 +5,14 @@ import requests
 from django.core.cache import cache
 from django.http import JsonResponse
 
-from federation import follower_sync, handlers, http_signatures, remotes, rfc9421
+from federation import (
+    follower_sync,
+    handlers,
+    http_signatures,
+    integrity,
+    remotes,
+    rfc9421,
+)
 from federation.models import Activity, ActivityStatus
 from moderation import blocks
 
@@ -118,6 +125,8 @@ def process_inbox(request):
         return JsonResponse({"error": "unknown actor"}, status=401)
     if document.get("actor") != actor.ap_id:
         return JsonResponse({"error": "actor mismatch"}, status=403)
+    if "proof" in document and not integrity.verify_proof(document):
+        return JsonResponse({"error": "invalid proof"}, status=401)
     if not _throttle(f"actor:{actor.ap_id}", INBOUND_ACTOR_LIMIT):
         return JsonResponse({"error": "rate limited"}, status=429)
     if blocks.should_drop_inbound(actor, document.get("type")):
