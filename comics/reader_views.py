@@ -129,6 +129,7 @@ def comic_home(request, slug):
             "latest_url": latest_url,
             "show_dashboard": permissions.can_edit(request.user, comic)
             or permissions.can_moderate(request.user, comic),
+            "websub_hub": settings.WEBSUB_HUB_URL,
         },
     )
 
@@ -276,6 +277,7 @@ def reader(request, slug, series_slug, position):
         ],
         "nav": nav,
         "next_image": next_image,
+        "websub_hub": settings.WEBSUB_HUB_URL,
     }
     template = (
         "comics/_reader.html"
