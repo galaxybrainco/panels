@@ -69,6 +69,9 @@ def publish(page, *, published_by=None, when=None, require_scheduled=False):
 
     federation.emit_page_activity(locked, "Create")
     notify_new_page(locked)
+    from feeds.websub import enqueue_comic
+
+    enqueue_comic(locked.series.comic)
     return locked
 
 
@@ -97,8 +100,10 @@ def unpublish_page(user, page):
     locked.save(update_fields=["status", "published_at", "scheduled_for", "updated_at"])
     if was_published:
         from comics import federation
+        from feeds.websub import enqueue_comic
 
         federation.emit_page_activity(locked, "Delete")
+        enqueue_comic(locked.series.comic)
     return locked
 
 

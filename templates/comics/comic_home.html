@@ -3,6 +3,7 @@
 {% block extra_head %}
   <link rel="alternate" type="application/rss+xml" title="{{ comic.title }} RSS" href="{{ request.scheme }}://{{ request.get_host }}{% url 'comic-rss' comic.slug %}">
   <link rel="alternate" type="application/atom+xml" title="{{ comic.title }} Atom" href="{{ request.scheme }}://{{ request.get_host }}{% url 'comic-atom' comic.slug %}">
+  {% if websub_hub %}<link rel="hub" href="{{ websub_hub }}">{% endif %}
   <link rel="alternate" type="application/json+oembed" href="{{ request.scheme }}://{{ request.get_host }}{% url 'oembed' %}?url={{ request.build_absolute_uri|urlencode }}&amp;format=json">
   <meta property="og:type" content="website">
   <meta property="og:title" content="{{ comic.title }}">
