@@ -2,6 +2,7 @@ import hashlib
 from datetime import datetime
 from urllib.parse import quote
 
+from django.conf import settings
 from django.core.paginator import Paginator
 from django.http import Http404, HttpResponse, HttpResponseBadRequest
 from django.shortcuts import get_object_or_404, redirect, render
@@ -27,6 +28,8 @@ def _comic_or_404(slug):
 
 
 def _record_view(request, page):
+    if not settings.PAGE_VIEW_ANALYTICS_ENABLED:
+        return
     session_key = request.session.session_key
     if not session_key:
         request.session.save()
