@@ -1,16 +1,25 @@
 import calendar
-from datetime import datetime
+from collections import OrderedDict
+from datetime import datetime, timedelta
 
+from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
-from django.db.models import Q
+from django.db.models import Count, Q
 from django.http import HttpResponseBadRequest
 from django.shortcuts import get_object_or_404, render
 from django.utils import timezone
 
 from billing.models import ComicPlan
 from comics import permissions
-from comics.models import Comic, Page, PageStatus, QuoteRequest, QuoteStatus
+from comics.models import (
+    Comic,
+    Page,
+    PageStatus,
+    PageView,
+    QuoteRequest,
+    QuoteStatus,
+)
 from media.quota import comic_storage_bytes, comic_storage_quota
 from memberships.models import SupporterStatus
 from moderation.models import Report, ReportStatus
@@ -91,8 +100,33 @@ def dashboard(request, slug):
             PageStatus.PUBLISHED,
         )
     }
+    analytics_enabled = settings.PAGE_VIEW_ANALYTICS_ENABLED
+    views_total = views_30d = views_unique_30d = 0
+    top_pages = []
+    if analytics_enabled:
+        cutoff = timezone.now() - timedelta(days=30)
+        views = PageView.objects.filter(page__series__comic=comic)
+        recent_views = views.filter(created_at__gte=cutoff)
+        unique_keys = OrderedDict()
+        for user_id, session_hash in recent_views.values_list(
+            "user_id", "session_hash"
+        ):
+            unique_keys[("u", user_id) if user_id else ("s", session_hash)] = True
+        views_total = views.count()
+        views_30d = recent_views.count()
+        views_unique_30d = len(unique_keys)
+        top_pages = (
+            pages.filter(views__created_at__gte=cutoff)
+            .annotate(recent_views=Count("views"))
+            .order_by("-recent_views", "position", "id")[:5]
+        )
     context = {
         "comic": comic,
+        "analytics_enabled": analytics_enabled,
+        "views_total": views_total,
+        "views_30d": views_30d,
+        "views_unique_30d": views_unique_30d,
+        "top_pages": top_pages,
         "show_editor": show_editor,
         "show_moderation": show_moderation,
         "show_owner": show_owner,

@@ -11,7 +11,23 @@
       <div><strong>{{ counts.draft }}</strong><span>drafts</span></div>
       <div><strong>{{ counts.scheduled }}</strong><span>scheduled</span></div>
       <div><strong>{{ counts.published }}</strong><span>published</span></div>
+      {% if analytics_enabled %}
+        <div><strong>{{ views_total }}</strong><span>views</span></div>
+        <div><strong>{{ views_30d }}</strong><span>views (30d)</span></div>
+        <div><strong>{{ views_unique_30d }}</strong><span>unique readers (30d)</span></div>
+      {% endif %}
     </section>
+
+    {% if analytics_enabled and top_pages %}
+      <section class="top-pages">
+        <h2>Top pages (30 days)</h2>
+        <ul>
+          {% for page in top_pages %}
+            <li>{{ page.title|default:"Page" }} · {{ page.recent_views }} view{{ page.recent_views|pluralize }}</li>
+          {% endfor %}
+        </ul>
+      </section>
+    {% endif %}
 
     {% if show_editor %}
       <section class="schedule">

@@ -1,6 +1,8 @@
+import hashlib
 from datetime import datetime
 from urllib.parse import quote
 
+from django.conf import settings
 from django.core.paginator import Paginator
 from django.http import Http404, HttpResponse, HttpResponseBadRequest
 from django.shortcuts import get_object_or_404, redirect, render
@@ -9,7 +11,7 @@ from django.views.decorators.vary import vary_on_headers
 
 from actors.models import Actor
 from comics import permissions, reading
-from comics.models import Comic, Page, PageStatus, Series
+from comics.models import Comic, Page, PageStatus, PageView, Series
 from media.derivative_urls import DerivativeKind, derivative_url
 from memberships.services import can_view_page, page_requires_tier
 from social.models import ReadingProgress
@@ -23,6 +25,21 @@ def _comic_or_404(slug):
     if not accounts.publicly_visible(comic.actor):
         raise Http404
     return comic
+
+
+def _record_view(request, page):
+    if not settings.PAGE_VIEW_ANALYTICS_ENABLED:
+        return
+    session_key = request.session.session_key
+    if not session_key:
+        request.session.save()
+        session_key = request.session.session_key
+    digest = hashlib.sha256((session_key or "").encode("utf-8")).hexdigest()
+    PageView.objects.create(
+        page=page,
+        user=request.user if request.user.is_authenticated else None,
+        session_hash=digest,
+    )
 
 
 def _viewer_actor(request):
@@ -232,6 +249,7 @@ def reader(request, slug, series_slug, position):
         return guarded
     if request.user.is_authenticated:
         record_progress(request.user, page)
+    _record_view(request, page)
     nav_pages = reading.neighbors(page)
     nav = {
         key: (_reader_url(value) if value is not None else None)
