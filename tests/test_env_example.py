@@ -38,3 +38,10 @@ def test_env_example_keys_are_consumed_by_settings():
     assert unconsumed == set(), (
         f".env.example documents unread keys: {sorted(unconsumed)}"
     )
+
+
+def test_env_example_documents_all_consumed_settings():
+    missing = _consumed_keys() - _documented_keys()
+    assert missing == set(), (
+        f".env.example is missing consumed settings: {sorted(missing)}"
+    )
