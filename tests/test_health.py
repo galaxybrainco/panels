@@ -1,23 +1,38 @@
 import pytest
-from django.test import Client
-from django.urls import reverse
+from django.db import OperationalError
 
 
 @pytest.mark.django_db
-def test_healthz_returns_ok_with_db_roundtrip(client):
-    response = client.get(reverse("healthz"))
+def test_healthz_reports_database_and_cache(client):
+    response = client.get("/healthz")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "database": "ok"}
+    assert response.json() == {
+        "status": "ok",
+        "database": "ok",
+        "cache": "ok",
+    }
 
 
 @pytest.mark.django_db
-def test_healthz_returns_500_when_database_unavailable(monkeypatch):
-    from django.db import connection
+def test_healthz_returns_503_when_database_fails(client, monkeypatch):
+    def broken():
+        raise OperationalError("db down")
 
-    def boom(*args, **kwargs):
-        raise RuntimeError("database down")
+    monkeypatch.setattr("config.health._check_database", broken)
+    response = client.get("/healthz")
+    assert response.status_code == 503
+    assert response.json()["status"] == "degraded"
+    assert response.json()["database"] == "error"
+    assert b"db down" not in response.content
 
-    monkeypatch.setattr(connection, "cursor", boom)
-    client = Client(raise_request_exception=False)
-    response = client.get(reverse("healthz"))
-    assert response.status_code == 500
+
+@pytest.mark.django_db
+def test_healthz_returns_503_when_cache_fails(client, monkeypatch):
+    def broken():
+        raise RuntimeError("cache down")
+
+    monkeypatch.setattr("config.health._check_cache", broken)
+    response = client.get("/healthz")
+    assert response.status_code == 503
+    assert response.json()["cache"] == "error"
+    assert b"cache down" not in response.content
