@@ -1,0 +1,42 @@
+app = "panels-staging"
+primary_region = "iad"
+
+[build]
+
+[deploy]
+  release_command = "python manage.py migrate --noinput && python manage.py createcachetable"
+
+[env]
+  DJANGO_SETTINGS_MODULE = "config.settings.prod"
+  INSTANCE_URL = "https://panels-staging.fly.dev"
+  DJANGO_ALLOWED_HOSTS = "panels-staging.fly.dev,localhost,127.0.0.1"
+  DJANGO_CSRF_TRUSTED_ORIGINS = "https://panels-staging.fly.dev"
+  INSTANCE_NAME = "Panels Staging"
+  INSTANCE_OPEN_REGISTRATIONS = "False"
+  PAGE_VIEW_ANALYTICS_ENABLED = "False"
+
+[processes]
+  web = "gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 2 --timeout 120 --access-logfile -"
+  worker = "python manage.py db_worker"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["web"]
+
+  [[http_service.checks]]
+    interval = "15s"
+    timeout = "5s"
+    grace_period = "30s"
+    method = "GET"
+    path = "/healthz"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+
+kill_signal = "SIGINT"
+kill_timeout = 5

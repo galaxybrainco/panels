@@ -1,0 +1,14 @@
+.git
+.github
+.venv
+.worktrees
+.superpowers
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+.env
+uploads
+staticfiles
+docs
+tests
